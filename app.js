@@ -10,14 +10,20 @@
      4. Live-Sync                9. Einstellungen & Editoren
      5. Sheets, Dialoge, Toast  10. Siegerehrung, Sound, PWA, Start
      6b. Fotos, Joker, Abzeichen, Rennverlauf, TV-Modus
-     6c. Higher or Lower & Buzzer
+     6c. Rollen (Spieler, Quizmaster, Fernseher), Higher or Lower, Buzzer, Bluff
    ========================================================================== */
 (function () {
   'use strict';
 
   const CFG = window.GAMENIGHT_CONFIG || {};
   const PREVIEW = !!window.GN_PREVIEW;
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
+  const SCHEMA = 4;
+  const ROLE_FRESH = 12 * 3600 * 1000; // so lange gilt ein Handy als „im Raum“
+  const QM_FRESH = 60 * 60 * 1000;     // so lange nach seiner letzten Aktion gilt der Quizmaster als anwesend
+  const QM_COLOR = '#ffc93c';
+  // In Version 1.4 neu dazugekommene Handicaps (werden in bestehende Listen übernommen)
+  const NEW_HANDICAPS_V14 = ['trickverbot', 'abkuerzung', 'muenzfasten', 'nachhinten', 'kopfstand', 'zeigefinger', 'pirat', 'hinterbaenkler', 'boxenstopp', 'ferngesteuert'];
   const K_STATE = 'jgn.state.v1';
   const K_LOCAL = 'jgn.local.v1';
   const K_PENDING = 'jgn.pending.v1';
@@ -97,6 +103,7 @@
     cer: null, known: null, booting: true, noise: null, dismissedStage: null,
     gameOpen: null, gameSeen: null, bzSeen: null, holSel: null, holProxy: null, holReady: null, bzEarly: {}, bzFx: null,
     bluffSeen: null, blQ: null, blSel: null, blProxy: null, blReady: null, blWarn: null, blDraft: null, blSug: {}, blRv: null,
+    blRvT: {}, holRvSeen: null, blStepSeen: null, roleAsked: null, whoSheet: null,
   };
 
   function normalizePlayer(p, i) {
@@ -136,6 +143,11 @@
   const defaultLists = () => (CFG.handicapLists || []).map(normalizeList);
   const emptyWheel = () => ({ race: 1, current: {}, log: [], lastSpin: null });
   const newSession = (n) => ({ id: uid(), number: n, name: 'GameNight #' + n, startedAt: Date.now() });
+  function normalizeQm(q) {
+    q = q && typeof q === 'object' ? q : {};
+    const c = CFG.quizmaster || {};
+    return { name: String(q.name || c.name || 'Quizmaster').slice(0, 20), emoji: q.emoji || c.emoji || '🎤' };
+  }
 
   function buildDefaults() {
     const players = (CFG.players || []).map(normalizePlayer);
@@ -143,13 +155,13 @@
     const plan = (CFG.plan || [])
       .filter((s) => games.some((g) => g.id === s.game))
       .map((s) => ({ id: uid(), gameId: s.game, multiplier: s.multiplier === 2 ? 2 : 1 }));
-    return { schema: 3, players, games, handicapLists: defaultLists(), plan, results: [], wheel: emptyWheel(), session: newSession(1), archive: [], media: {}, jokerCalls: {}, stage: null, live: {}, holPlays: {}, bluffPlays: {} };
+    return { schema: SCHEMA, players, games, handicapLists: defaultLists(), plan, results: [], wheel: emptyWheel(), session: newSession(1), archive: [], media: {}, jokerCalls: {}, stage: null, live: {}, holPlays: {}, bluffPlays: {}, qm: normalizeQm() };
   }
 
   // Bringt gespeicherte oder empfangene Daten in die aktuelle Form.
   function migrate(s) {
     if (!s || typeof s !== 'object') return buildDefaults();
-    const out = { schema: 3 };
+    const out = { schema: SCHEMA };
     out.players = Array.isArray(s.players) && s.players.length ? s.players.map(normalizePlayer) : (CFG.players || []).map(normalizePlayer);
     out.games = Array.isArray(s.games) ? s.games.map(normalizeGame) : (CFG.games || []).map(normalizeGame);
     // Version 1.2: neue Spiele aus config.js (Higher or Lower) ergänzen, Buzzer für Quizspiele einschalten
@@ -164,7 +176,20 @@
     if ((Number(s.schema) || 1) < 3 && Array.isArray(s.games) && !out.games.some((g) => g.mode === 'bluff')) {
       (CFG.games || []).filter((cg) => cg.mode === 'bluff' && !out.games.some((g) => g.id === cg.id)).forEach((cg) => out.games.push(normalizeGame(cg)));
     }
+    // Version 1.4: Quizspiele für den Quizblock sicherstellen
+    if ((Number(s.schema) || 1) < 4 && Array.isArray(s.games)) {
+      (CFG.games || []).filter((cg) => (cg.id === 'schaetzen' || cg.id === 'filme') && !out.games.some((g) => g.id === cg.id)).forEach((cg) => out.games.push(normalizeGame(cg)));
+    }
     out.handicapLists = Array.isArray(s.handicapLists) ? s.handicapLists.map(normalizeList) : defaultLists();
+    // Version 1.4: neue Mario-Kart-Handicaps in die bestehende Liste übernehmen
+    if ((Number(s.schema) || 1) < 4 && Array.isArray(s.handicapLists)) {
+      (CFG.handicapLists || []).forEach((cl) => {
+        const list = out.handicapLists.find((l) => l.id === cl.id);
+        if (!list) return;
+        (cl.items || []).filter((it) => NEW_HANDICAPS_V14.includes(it.id) && !list.items.some((x) => x.id === it.id))
+          .forEach((it) => list.items.push(normalizeItem(it)));
+      });
+    }
     out.plan = Array.isArray(s.plan)
       ? s.plan.filter((x) => x && x.gameId).map((x) => ({ id: String(x.id || uid()), gameId: String(x.gameId), multiplier: x.multiplier === 2 ? 2 : 1 }))
       : buildDefaults().plan;
@@ -202,6 +227,7 @@
     if (s.bluffPlays && typeof s.bluffPlays === 'object') {
       for (const k in s.bluffPlays) if (Number(s.bluffPlays[k]) > 0) out.bluffPlays[k] = Number(s.bluffPlays[k]);
     }
+    out.qm = normalizeQm(s.qm);
     return out;
   }
 
@@ -211,6 +237,8 @@
       lsGet(K_LOCAL, {}) || {}
     );
     if (!TABS.some((t) => t.id === local.tab)) local.tab = 'board';
+    // Jedes Gerät bekommt eine feste Kennung, damit der Raum weiß, welches Handy wer ist.
+    if (!local.dev) { local.dev = 'd' + uid(); lsSet(K_LOCAL, local); }
     const saved = lsGet(K_STATE, null);
     state = saved ? migrate(saved) : buildDefaults();
   }
@@ -221,6 +249,7 @@
   function commit(mutator, opts = {}) {
     const before = Sync.active() ? toNodes(state) : null;
     mutator(state);
+    if (before && !opts.noClaim) touchClaim(state, !!opts.claim); // hält die eigene Rolle im Raum frisch
     saveState();
     if (before) Sync.markChanged(before, toNodes(state));
     snapshotKnown();
@@ -364,7 +393,7 @@
      bestätigt hat – so geht auch offline nichts verloren.
      Die eigentliche Verbindung (Firebase) steckt in sync.js.
      ====================================================================== */
-  const CONFIG_KEYS = ['schema', 'players', 'games', 'handicapLists', 'plan', 'session', 'archive', 'holPlays', 'bluffPlays'];
+  const CONFIG_KEYS = ['schema', 'players', 'games', 'handicapLists', 'plan', 'session', 'archive', 'holPlays', 'bluffPlays', 'qm'];
   function toNodes(st) {
     const cfg = {};
     CONFIG_KEYS.forEach((k) => { cfg[k] = st[k]; });
@@ -543,13 +572,14 @@
       adapter.onConnection((ok) => {
         if (gen !== this.gen) return;
         this.setStatus(ok ? 'live' : 'offline');
-        if (ok) this.flush();
+        if (ok) { this.flush(); refreshClaim(); }
       });
       adapter.subscribe(
         (val) => { if (gen === this.gen) this.onRemote(val); },
         (err) => { if (gen === this.gen) this.setStatus('error', friendlyError(err)); }
       );
       this.flush();
+      if (interactive) refreshClaim(true);
       render();
       return true;
     },
@@ -573,6 +603,7 @@
 
   function onRemoteState() {
     announceRemoteChanges();
+    checkMyClaim();
     if (ui.spinning && local.tab === 'wheel' && !local.tv) ui.renderQueued = true;
     else render();
     maybeAnimateRemoteSpin();
@@ -650,6 +681,7 @@
         setTimeout(() => layer.remove(), reducedMotion() ? 0 : 200);
         if (opts.onClose) opts.onClose(api);
         if (!fromPop) releaseHistoryIfIdle();
+        if (!ui.sheets.length) setTimeout(() => { maybeAskRole(); renderRoleChip(); }, 320);
       },
     };
     layer.addEventListener('click', (ev) => {
@@ -711,7 +743,7 @@
 
   function buildShell() {
     const app = $('#app');
-    app.innerHTML = `<header class="topbar"><div class="brand">${brandMark()}<div><div class="brand-name">${esc(CFG.appName || 'GameNight')}</div><div class="brand-sub" id="brand-sub"></div></div></div><button class="sync-pill" id="sync-pill" type="button" data-act="openSync"><span class="dot"></span><span class="lbl"></span></button></header><main class="view" id="view"></main><nav class="tabbar" aria-label="Hauptnavigation">${TABS.map((t) => `<button class="tab" type="button" data-act="tab" data-tab="${t.id}">${t.icon}<span>${t.label}</span></button>`).join('')}</nav>`;
+    app.innerHTML = `<header class="topbar"><div class="brand">${brandMark()}<div><div class="brand-name">${esc(CFG.appName || 'GameNight')}</div><div class="brand-sub" id="brand-sub"></div></div></div><div class="top-right"><button class="role-chip" id="role-chip" type="button" data-act="whoAmI" hidden></button><button class="sync-pill" id="sync-pill" type="button" data-act="openSync"><span class="dot"></span><span class="lbl"></span></button></div></header><main class="view" id="view"></main><nav class="tabbar" aria-label="Hauptnavigation">${TABS.map((t) => `<button class="tab" type="button" data-act="tab" data-tab="${t.id}">${t.icon}<span>${t.label}</span></button>`).join('')}</nav>`;
     app.dataset.ready = '1';
   }
 
@@ -728,11 +760,25 @@
     pill.querySelector('.lbl').textContent = label;
     pill.setAttribute('aria-label', 'Live-Sync: ' + syncStatusText());
   }
+  // Oben rechts: Als wer spielt dieses Handy? (nur mit Live-Sync wichtig)
+  function renderRoleChip() {
+    const chip = $('#role-chip');
+    if (!chip) return;
+    const show = Sync.active() && !local.tv;
+    chip.hidden = !show;
+    if (chip.parentElement) chip.parentElement.classList.toggle('with-role', show);
+    if (!show) return;
+    const p = rolePerson();
+    chip.classList.toggle('unset', !p);
+    chip.innerHTML = p ? `${avatar(p, 'xs', { crown: false })}<span>${esc(short(p.name, 11))}</span>` : '<span>Wer bist du?</span>';
+    chip.setAttribute('aria-label', p ? `Dieses Handy: ${p.name}. Antippen zum Ändern` : 'Wer nutzt dieses Handy? Rolle wählen');
+  }
 
   function render() {
     if (!$('#app').dataset.ready) buildShell();
     document.body.classList.toggle('tv-mode', !!local.tv);
     renderSyncPill();
+    renderRoleChip();
     if (ui.spinning && local.tab === 'wheel' && !local.tv) { ui.renderQueued = true; return; }
     ui.renderQueued = false;
     $('#brand-sub').textContent = state.session.name + ' · ' + fmtDate(state.session.startedAt);
@@ -756,6 +802,7 @@
     checkComebacks();
     gameSync();
     renderGame();
+    maybeAskRole();
   }
 
   // Sanftes Umsortieren der Tabelle, wenn sich Plätze ändern.
@@ -800,7 +847,10 @@
     const trend = rankTrend();
     const slots = slotList();
     const cur = slots.find((s) => !s.result) || null;
+    const desk = isHost() && Sync.active();
     const parts = [trackHtml(slots, bs)];
+    if (needsRole()) parts.push('<button class="banner live role-banner" type="button" data-act="whoAmI"><span class="b-emoji" aria-hidden="true">👋</span><span><b>Wer bist du?</b> Tippe hier und wähle, wer dieses Handy benutzt.</span></button>');
+    if (desk) parts.push(qmDeskHtml(slots, cur), nextHtml(cur, bs, slots));
     if (live('hol') && ui.gameOpen !== 'hol') parts.push('<button class="banner live" type="button" data-act="gameOpen" data-k="hol"><span class="b-emoji" aria-hidden="true">📈</span><span><b>Higher or Lower läuft</b> – zurück ins Spiel</span></button>');
     if (live('bluff') && ui.gameOpen !== 'bluff') parts.push('<button class="banner live" type="button" data-act="gameOpen" data-k="bluff"><span class="b-emoji" aria-hidden="true">🎭</span><span><b>Bluff läuft</b> – zurück ins Spiel</span></button>');
     if (live('bz') && ui.gameOpen !== 'bz') parts.push('<button class="banner live" type="button" data-act="gameOpen" data-k="bz"><span class="b-emoji" aria-hidden="true">🔔</span><span><b>Der Buzzer ist offen</b> – zurück zum Buzzer</span></button>');
@@ -810,7 +860,7 @@
       parts.push(`<div class="banner"><span class="b-emoji" aria-hidden="true">🏆</span><span><b>${esc(rows[0].p.name)}</b> ist nicht mehr einzuholen.</span></div>`);
     }
     parts.push(`<ol class="standings" aria-label="Tabelle">${rows.map((r) => posCard(r, rows, bs, trend)).join('')}</ol>`);
-    parts.push(nextHtml(cur, bs, slots));
+    if (!desk) parts.push(nextHtml(cur, bs, slots));
     const chart = chartHtml();
     if (chart) parts.push(`<section class="card"><div class="eyebrow">Rennverlauf</div>${chart}</section>`);
     parts.push(breakdownHtml());
@@ -900,6 +950,28 @@
     return `<section class="card"><div class="eyebrow">Punkte nach Disziplin</div><div class="table-wrap"><table class="breakdown"><thead><tr><th><span class="visually-hidden">Spiel</span></th>${ps.map((p) => `<th title="${esc(p.name)}" aria-label="${esc(p.name)}">${face(p)}</th>`).join('')}</tr></thead><tbody>${body}</tbody><tfoot><tr><td>Gesamt</td>${ps.map((p) => `<td>${fmtPts(totals[p.id] || 0)}</td>`).join('')}</tr></tfoot></table></div></section>`;
   }
 
+  /* ---------- Quizmaster-Pult (nur auf dem Handy des Quizmasters) ---------- */
+  function qmDeskHtml(slots, cur) {
+    const q = qmPerson();
+    const quiz = slots.filter((s) => isQuizGame(s.game));
+    const open = quiz.filter((s) => !s.result);
+    if (quiz.length && !open.length) {
+      return `<section class="qm-desk" aria-label="Quizmaster-Pult"><div class="qm-head">${avatar(q, '', { crown: false })}<div><div class="eyebrow">Quizmaster-Pult</div><div class="qm-hi">Quizblock geschafft!</div></div></div>
+        <p class="qm-text">Danke fürs Moderieren, ${esc(q.name)}. Ab jetzt leiten die Spieler selbst.</p>
+        <button class="btn ghost" type="button" data-act="qmLeave">Als Quizmaster abmelden</button></section>`;
+    }
+    const list = quiz.length
+      ? `<ol class="qm-block">${quiz.map((s) => {
+        const now = !!(cur && cur.id === s.id);
+        const st = s.result ? '<span class="st ok">✓ gespielt</span>' : now ? '<span class="st now">jetzt</span>' : '<span class="st">später</span>';
+        return `<li class="${s.result ? 'done' : now ? 'now' : ''}"><span class="g-emoji" aria-hidden="true">${esc(s.game.emoji)}</span><span class="nm">${esc(s.game.name)}<small>Spiel ${s.index + 1}</small></span>${st}</li>`;
+      }).join('')}</ol>`
+      : '<p class="note">Im Spielplan steht noch kein Quizspiel. Unter Spielplan → Bearbeiten kannst du welche anhängen.</p>';
+    return `<section class="qm-desk" aria-label="Quizmaster-Pult"><div class="qm-head">${avatar(q, '', { crown: false })}<div><div class="eyebrow">Quizmaster-Pult</div><div class="qm-hi">Hallo ${esc(q.name)}!</div></div></div>
+      <div class="eyebrow">Dein Quizblock</div>${list}
+      <p class="note">Bei Higher or Lower und Bluff siehst nur du die Lösung und deckst selbst auf. Beim Buzzer gibst du frei und wertest.</p></section>`;
+  }
+
   /* ---------- Spielplan ---------- */
   function viewPlan() {
     const slots = slotList();
@@ -925,7 +997,7 @@
     const g = s.game || { emoji: '❓', name: 'Gelöschtes Spiel' };
     const isNow = !!(cur && cur.id === s.id);
     const hc = s.result && s.result.handicaps && s.result.handicaps.length;
-    const sub = esc(s.label) + (s.multiplier > 1 ? ' · Finale ×2' : '') + (hc ? ` · ${hc} Handicaps` : '');
+    const sub = esc(s.label) + (s.multiplier > 1 ? ' · Finale ×2' : '') + (hc ? ` · ${hc} Handicaps` : '') + (isQuizGame(s.game) ? ' · 🎤 Quizmaster' : '');
     const right = s.result ? resultMini(s.result) : isNow ? '<span class="badge">Jetzt</span>' : '';
     return `<li><button class="slot${isNow ? ' now' : ''}${!s.result && !isNow ? ' later' : ''}" type="button" data-act="${s.result ? 'editResult' : s.game && s.game.mode === 'hol' ? 'holStart' : s.game && s.game.mode === 'bluff' ? 'bluffStart' : 'enterResult'}" data-slot="${esc(s.id)}"><span class="idx">${s.index + 1}</span><span class="g-emoji" aria-hidden="true">${esc(g.emoji)}</span><span class="main"><b>${esc(g.name)}</b><small>${sub}</small></span><span class="res">${right}</span></button></li>`;
   }
@@ -948,17 +1020,19 @@
     <section class="group"><div class="eyebrow">GameNight</div><div class="rows">
       ${rowBtn('editSession', 'Name des Abends', state.session.name)}
       ${rowBtn('finishNight', 'GameNight abschließen', '', 'Endstand archivieren und bei 0 neu starten')}
+      ${rowBtn('clearResults', 'Ergebnisse zurücksetzen', '', 'Zum Beispiel nach einem Testlauf: Punkte auf 0, alles andere bleibt')}
       ${rowBtn('hallOfFame', 'Ruhmeshalle', state.archive.length ? state.archive.length + ' ' + plural(state.archive.length, 'Abend', 'Abende') : 'noch leer')}
     </div></section>
     <section class="group"><div class="eyebrow">Einrichten</div><div class="rows">
       ${rowBtn('editPlayers', 'Spieler', state.players.map((p) => p.emoji).join(' '))}
+      ${rowBtn('editQm', 'Quizmaster', state.qm.emoji + ' ' + state.qm.name, 'Name und Foto. Spielt nicht mit.')}
       ${rowBtn('editGames', 'Spiele & Punkte', state.games.length + ' ' + plural(state.games.length, 'Spiel', 'Spiele'))}
       ${rowBtn('editPlan', 'Spielplan', state.plan.length + ' ' + plural(state.plan.length, 'Spiel', 'Spiele'))}
       ${rowBtn('editLists', 'Glücksrad-Listen', lists + ' ' + plural(lists, 'Liste', 'Listen'))}
     </div></section>
     <section class="group"><div class="eyebrow">Live-Sync</div><div class="rows">
       ${rowBtn('openSync', 'Handys verbinden', '', syncStatusText())}
-      ${rowBtn('whoAmI', 'Dieses Gerät', roleLabel(), 'Wer spielt hier? Wichtig für Higher or Lower und den Buzzer')}
+      ${rowBtn('whoAmI', 'Dieses Gerät', roleLabel(), 'Spieler, Quizmaster oder Fernseher')}
     </div></section>
     <section class="group"><div class="eyebrow">App</div><div class="rows">
       ${switchRow('sound', 'Sounds', 'Ticken und Fanfare beim Glücksrad', local.sound)}
@@ -1380,7 +1454,8 @@
     const lastGame = last ? gameById(last.gameId) : null;
     const lastHtml = last ? `<section class="tv-card tv-last"><div class="eyebrow">Zuletzt gespielt</div><div class="tv-last-line"><span>${esc(lastGame ? lastGame.emoji : last.emoji)} ${esc(lastGame ? lastGame.name : last.gameName)}</span><span class="res">${resultMini(last)}</span></div></section>` : '';
     const chart = chartHtml({ tall: true });
-    return `<div class="tv-wrap"><header class="tv-head">${brandMark()}<div class="tv-title"><div class="tv-app">${esc(CFG.appName || 'GameNight')}</div><div class="tv-sub">${esc(state.session.name)}</div></div><div class="tv-tools"><button class="btn small ghost" type="button" data-act="tvFull">Vollbild</button><button class="btn small ghost" type="button" data-act="tvExit">TV-Modus beenden</button></div></header>
+    const qmChip = qmPresent() ? `<div class="tv-qm">${avatar(qmPerson(), 'sm', { crown: false })}<span><small>Quizmaster</small>${esc(state.qm.name)}</span></div>` : '';
+    return `<div class="tv-wrap"><header class="tv-head">${brandMark()}<div class="tv-title"><div class="tv-app">${esc(CFG.appName || 'GameNight')}</div><div class="tv-sub">${esc(state.session.name)}</div></div>${qmChip}<div class="tv-tools"><button class="btn small ghost" type="button" data-act="tvFull">Vollbild</button><button class="btn small ghost" type="button" data-act="tvExit">TV-Modus beenden</button></div></header>
       <div class="tv-grid"><section class="tv-left">${trackHtml(slots, bs)}${banner}<ol class="standings" aria-label="Tabelle">${rows.map((r) => posCard(r, rows, bs, trend)).join('')}</ol></section>
       <section class="tv-right">${next}${chart ? `<section class="tv-card"><div class="eyebrow">Rennverlauf</div>${chart}</section>` : ''}${lastHtml}</section></div>
       ${!Sync.active() && !PREVIEW ? '<p class="foot">Tipp: Mit Live-Sync aktualisiert sich diese Ansicht automatisch, während ihr auf den Handys eintragt.</p>' : ''}</div>`;
@@ -1439,30 +1514,134 @@
      Spielstand selbst wird auf jedem Gerät aus diesen Eingaben berechnet.
      ====================================================================== */
 
-  /* ---------- Wer nutzt dieses Gerät? ---------- */
+  /* ---------- Wer nutzt dieses Gerät? ----------
+     Jedes Handy hat eine feste Rolle: ein Spieler, der Quizmaster ('host')
+     oder Zuschauer/Fernseher ('watch'). Mit Live-Sync meldet sich jedes Gerät
+     zusätzlich im Raum an (live/dev_<Gerät>), damit alle wissen, welcher
+     Spieler schon ein eigenes Handy hat. */
   const myId = () => (local.me && playerById(local.me) ? local.me : null);
   const isHost = () => local.me === 'host';
+  const isWatch = () => local.me === 'watch';
+  const roleValid = () => !!myId() || isHost() || isWatch();
+  const needsRole = () => Sync.active() && !local.tv && !roleValid();
+  const qmPerson = () => ({ id: 'host', name: (state.qm && state.qm.name) || 'Quizmaster', emoji: (state.qm && state.qm.emoji) || '🎤', color: QM_COLOR });
+  const qmName = () => qmPerson().name;
+  const watchPerson = () => ({ id: 'watch', name: 'Zuschauer', emoji: '📺', color: '#7d76b3' });
+  function rolePerson() {
+    if (myId()) return playerById(local.me);
+    if (isHost()) return qmPerson();
+    if (isWatch()) return watchPerson();
+    return null;
+  }
   function roleLabel() {
     const p = myId() ? playerById(local.me) : null;
     if (p) return p.name;
-    if (local.me === 'host') return 'Spielleiter';
-    if (local.me === 'watch') return 'Zuschauer';
+    if (isHost()) return 'Quizmaster';
+    if (isWatch()) return local.tv ? 'Fernseher' : 'Zuschauer';
     return 'noch nicht festgelegt';
   }
+  const isQuizGame = (g) => !!g && (g.mode === 'hol' || g.mode === 'bluff' || !!g.buzzer);
+
+  // Angemeldete Geräte im Raum
+  function devices() {
+    const out = [];
+    for (const k in state.live) {
+      if (k.indexOf('dev_') !== 0) continue;
+      const d = state.live[k];
+      if (!d || !d.me) continue;
+      out.push({ id: k.slice(4), me: String(d.me), at: Number(d.at) || 0, mine: k.slice(4) === local.dev });
+    }
+    return out;
+  }
+  const freshDevices = (ms = ROLE_FRESH) => devices().filter((d) => serverNow() - d.at < ms);
+  // Hat ein Spieler ein eigenes Handy im Raum? (das eigene Gerät zählt mit)
+  const hasDevice = (pid) => Sync.active() && freshDevices().some((d) => d.me === pid);
+  const otherDevicesWith = (role) => freshDevices().filter((d) => d.me === role && !d.mine);
+  // Ist ein Quizmaster da? Nur mit Live-Sync; gilt bis eine Stunde nach seiner letzten Aktion.
+  const qmPresent = () => Sync.active() && freshDevices(QM_FRESH).some((d) => d.me === 'host');
+
+  // Trägt die eigene Rolle in den Raum ein (läuft innerhalb von commit).
+  function touchClaim(st, force) {
+    if (!local.dev || !st.live) return;
+    const key = 'dev_' + local.dev;
+    const cur = st.live[key];
+    if (!roleValid()) {
+      if (cur && cur.me) delete st.live[key];
+      return;
+    }
+    const now = serverNow();
+    if (!force && cur && cur.me === local.me && now - (Number(cur.at) || 0) < 5 * 60 * 1000) return;
+    st.live[key] = { me: local.me, at: now, v: APP_VERSION };
+    if (force) {
+      // Aufräumen: Anmeldungen, die älter als eine Woche sind
+      Object.keys(st.live).forEach((k) => { if (k.indexOf('dev_') === 0 && k !== key && now - (Number(st.live[k].at) || 0) > 7 * 86400 * 1000) delete st.live[k]; });
+    }
+  }
+  function refreshClaim(force) {
+    if (!Sync.active()) return;
+    commit(() => {}, { render: false, claim: !!force });
+  }
+  // Hat ein anderes Handy unsere Rolle übernommen? Dann neu fragen.
+  function checkMyClaim() {
+    const mine = state.live && state.live['dev_' + local.dev];
+    if (!mine || !mine.moved || !local.me || local.tv) return;
+    local.me = null;
+    saveLocal();
+    toast('Deine Rolle ist jetzt auf einem anderen Gerät. Wer nutzt dieses Handy?');
+    ui.roleAsked = null;
+  }
+  // Fragt nach der Rolle, wenn sie fehlt (z. B. nach dem Beitreten oder wenn ein Spiel startet).
+  function maybeAskRole() {
+    if (!needsRole() || ui.booting || ui.sheets.length || ui.stage) return;
+    const key = ui.gameOpen ? 'game:' + ui.gameOpen : 'app';
+    if (ui.roleAsked === key) return;
+    ui.roleAsked = key;
+    setTimeout(() => { if (needsRole() && !ui.sheets.length) openWhoAmI(); }, 250);
+  }
+  function setRole(v, takeOver) {
+    local.me = v;
+    saveLocal();
+    ui.roleAsked = null;
+    ui.holProxy = null;
+    ui.blProxy = null;
+    if (Sync.active()) {
+      commit((st) => {
+        if (takeOver && v !== 'watch') {
+          // Das andere Handy mit dieser Rolle wird gebeten, neu zu wählen.
+          otherDevicesWith(v).forEach((d) => { st.live['dev_' + d.id] = { me: null, at: serverNow(), moved: true }; });
+        }
+      }, { render: false, claim: true });
+    }
+  }
   function openWhoAmI(after) {
-    openSheet({
-      title: 'Wer nutzt dieses Gerät?',
-      body: () => `<p class="sheet-text">Damit Higher or Lower und der Buzzer wissen, wer auf diesem Handy spielt.</p>
-        <div class="who-grid">${state.players.map((p) => `<button class="who-btn" type="button" data-s="me" data-v="${esc(p.id)}" aria-pressed="${local.me === p.id}" style="--pc:${esc(p.color)}">${avatar(p, '', { crown: false })}<span>${esc(p.name)}</span></button>`).join('')}</div>
-        <div class="rows"><button class="row" type="button" data-s="me" data-v="host"><span class="r-label">Spielleiter<small>Liest die Fragen vor und gibt den Buzzer frei</small></span>${local.me === 'host' ? '<span class="r-val">✓</span>' : ''}</button><button class="row" type="button" data-s="me" data-v="watch"><span class="r-label">Nur zuschauen<small>Zum Beispiel der Fernseher</small></span>${local.me === 'watch' ? '<span class="r-val">✓</span>' : ''}</button></div>`,
-      on: (a, el, ev, api) => {
+    if (ui.whoSheet && !ui.whoSheet.closed) return;
+    const taken = (role) => otherDevicesWith(role).length > 0;
+    const syncing = Sync.active();
+    const q = qmPerson();
+    const tag = (on, other) => (on ? '<small class="who-tag me">Das bist du</small>' : other ? '<small class="who-tag">anderes Handy</small>' : '');
+    ui.whoSheet = openSheet({
+      title: 'Wer bist du?',
+      body: () => `<p class="sheet-text">${syncing ? 'Dieses Handy spielt dann den ganzen Abend als diese Person. Ändern geht jederzeit oben rechts.' : 'Wichtig, sobald die Handys per Live-Sync verbunden sind.'}</p>
+        <div class="who-grid">${state.players.map((p) => `<button class="who-btn${taken(p.id) && local.me !== p.id ? ' taken' : ''}" type="button" data-s="me" data-v="${esc(p.id)}" aria-pressed="${local.me === p.id}" style="--pc:${esc(p.color)}">${avatar(p, '', { crown: false })}<span>${esc(p.name)}</span>${tag(local.me === p.id, taken(p.id))}</button>`).join('')}</div>
+        <div class="rows"><button class="row who-row" type="button" data-s="me" data-v="host">${avatar(q, 'sm', { crown: false })}<span class="r-label">Quizmaster${q.name !== 'Quizmaster' ? ' · ' + esc(q.name) : ''}<small>Spielt nicht mit. Liest vor, sieht die Lösungen und deckt auf.${taken('host') && !isHost() ? ' Ist schon auf einem anderen Handy.' : ''}</small></span>${isHost() ? '<span class="r-val">✓</span>' : ''}</button><button class="row who-row" type="button" data-s="me" data-v="watch">${avatar(watchPerson(), 'sm', { crown: false })}<span class="r-label">Fernseher oder nur zuschauen<small>Zeigt alles mit, ohne mitzuspielen</small></span>${isWatch() ? '<span class="r-val">✓</span>' : ''}</button></div>`,
+      on: async (a, el, ev, api) => {
         if (a !== 'me') return;
-        local.me = el.dataset.v;
-        saveLocal();
+        const v = el.dataset.v;
+        if (v === local.me) { api.close(); return; }
+        let takeOver = false;
+        if (v !== 'watch' && syncing && taken(v)) {
+          const who = v === 'host' ? 'Der Quizmaster' : (playerById(v) || {}).name;
+          const ok = await confirmSheet({ title: `${who} ist schon auf einem anderen Handy`, text: 'Wenn du hier weitermachst, wird das andere Handy gefragt, wer es ist. Das ist richtig, wenn jemand das Handy gewechselt oder sich vertippt hat.', ok: 'Übernehmen' });
+          if (!ok) return;
+          takeOver = true;
+        }
+        setRole(v, takeOver);
         api.close();
         render();
+        if (v === 'host' && state.qm.name === 'Quizmaster' && !after) setTimeout(() => openQmForm(true), 300);
         if (after) after();
       },
+      onClose: () => { ui.whoSheet = null; },
     });
   }
   const serverNow = () => Date.now() + (Number(Sync.offset) || 0);
@@ -1548,14 +1727,14 @@
     const running = live('hol');
     if (running) { ui.gameOpen = 'hol'; render(); return; }
     if (!holCategories().length) { toast('Keine Higher-or-Lower-Karten gefunden (hol-data.js fehlt).'); return; }
-    if (Sync.active() && !local.me) { openWhoAmI(() => holStart(slotId)); return; }
+    if (needsRole()) { openWhoAmI(() => holStart(slotId)); return; }
     const s = holSettings(game);
     const cats = holPickCategories(s.rounds);
     const rounds = cats.map((c) => holDeck(c, s.cards));
     const id = 'h' + uid();
     commit((st) => {
       Object.keys(st.live).forEach((k) => { if (k.indexOf('holA_') === 0) delete st.live[k]; });
-      st.live.hol = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', rounds, r: 0, c: 0, lives: s.lives, players: st.players.map((p) => p.id), startedAt: Date.now() };
+      st.live.hol = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', rounds, r: 0, c: 0, lives: s.lives, players: st.players.map((p) => p.id), startedAt: Date.now(), qm: qmPresent() };
       st.session.holUsed = (st.session.holUsed || []).concat(cats);
       cats.forEach((c) => { st.holPlays[c] = (st.holPlays[c] || 0) + 1; });
     }, { render: false });
@@ -1624,10 +1803,16 @@
           const g = Number(ans[pid][key]);
           const ok = holFits(timeline, g, card.value);
           res[pid] = { gap: g, ok };
-          if (ok) stats[pid].correct++; else wrong.push(pid);
+          if (!ok) wrong.push(pid);
         });
         // Würden alle Verbliebenen gleichzeitig rausfliegen, fliegt niemand.
         const wipeout = wrong.length > 0 && wrong.length === active.length && active.every((pid) => lives[pid] <= 1);
+        // Mit Quizmaster wartet die Auflösung, bis er aufdeckt.
+        if (isCurrent && ci === hol.c && hol.qm && hol.rv !== key) {
+          cur = Object.assign(info, { revealed: false, ready: true, res, wrong, wipeout, lives: Object.assign({}, lives), timeline: timeline.slice() });
+          break;
+        }
+        active.forEach((pid) => { if (res[pid].ok) stats[pid].correct++; });
         if (!wipeout) wrong.forEach((pid) => { lives[pid] -= 1; });
         holInsert(timeline, card);
         const still = players.filter((pid) => lives[pid] > 0);
@@ -1691,6 +1876,24 @@
     ui.holSel = null;
     render();
   }
+  // Der Quizmaster deckt die aktuelle Karte auf.
+  function holReveal() {
+    const hol = live('hol');
+    if (!hol) return;
+    const cur = holDerive(hol).cur;
+    if (!cur || !cur.ready) return;
+    const key = cur.ri + ':' + cur.ci;
+    commit((st) => { const h = st.live.hol; if (h && h.id === hol.id && h.r === cur.ri && h.c === cur.ci) h.rv = key; }, { render: false });
+    initAudio();
+    render();
+  }
+  // Notfall: ohne Quizmaster weiterspielen (deckt ab jetzt wieder von selbst auf)
+  async function gameNoQm(k) {
+    const ok = await confirmSheet({ title: 'Ohne Quizmaster weiterspielen?', text: `Normalerweise deckt ${qmName()} auf. Wenn ihr weitermacht, deckt die App ab jetzt in diesem Spiel selbst auf.`, ok: 'Selbst aufdecken', cancel: 'Warten' });
+    if (!ok) return;
+    commit((st) => { if (st.live[k]) st.live[k].qm = false; }, { render: false });
+    render();
+  }
   function holClear() {
     commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'hol' || k.indexOf('holA_') === 0) delete st.live[k]; }); }, { render: false });
     ui.gameOpen = null;
@@ -1731,6 +1934,24 @@
   function gameHead(inner, extra = '') {
     return `<header class="g-head"><button class="icon-btn" type="button" data-g="min" aria-label="Zurück zur Tabelle">${ICON.x}</button><div class="g-titles">${inner}</div>${extra}</header>`;
   }
+  // Rollen-Knopf oben in den Spielen (nur mit Live-Sync)
+  function gameRoleBtn() {
+    if (!Sync.active() || local.tv) return '';
+    const p = rolePerson();
+    if (!p) return '';
+    return `<button class="role-chip in-game icon" type="button" data-g="role" title="Dieses Handy: ${esc(p.name)}" aria-label="Dieses Handy: ${esc(p.name)}. Antippen zum Ändern">${avatar(p, 'sm', { crown: false })}</button>`;
+  }
+  // Markiert im Spieler-Streifen, wer auf diesem Handy spielt
+  const meTag = (pid) => (Sync.active() && pid === myId() ? '<span class="me-tag">Du</span>' : '');
+  // Ohne Rolle kann dieses Handy nicht mitspielen: deutlich danach fragen.
+  const roleCta = () => (needsRole() ? '<div class="who-cta"><p><b>Wer nutzt dieses Handy?</b> Wähle deine Rolle, dann kannst du hier direkt mitspielen.</p><button class="btn primary" type="button" data-g="role">Rolle wählen</button></div>' : '');
+  // „Für jemand anderen tippen“: direkt nur für Spieler ohne eigenes Handy, sonst als kleiner Notfall-Link
+  function holProxyHtml(p) {
+    if (local.tv || !p || needsRole()) return '';
+    if (!hasDevice(p.id)) return `<button class="link-btn g-proxy" type="button" data-g="proxy">${esc(p.name)} hat kein Handy? Hier für ${esc(p.name)} tippen</button>`;
+    return `<button class="link-btn g-help" type="button" data-g="proxy">Handy von ${esc(p.name)} streikt? Hier für ${esc(p.name)} tippen</button>`;
+  }
+  const holGapOf = (tl, v) => tl.filter((x) => x.value < v).length;
   function holHtml(hol) {
     const d = holDerive(hol);
     const total = hol.rounds.length;
@@ -1741,9 +1962,10 @@
     const turn = holTurn(cur);
     const me = myId();
     const syncing = Sync.active();
+    const qmView = syncing && isHost() && !local.tv; // nur der Quizmaster sieht die Lösung vorher
     const nextP = playerById(turn.next);
     let canAct = false;
-    if (!cur.revealed && nextP) {
+    if (!cur.revealed && !cur.ready && nextP) {
       if (!syncing) canAct = ui.holReady === `${hol.id}:${cur.ri}:${cur.ci}:${turn.next}`;
       else canAct = me === turn.next || ui.holProxy === turn.next;
     }
@@ -1757,10 +1979,15 @@
       else if (cur.answered.includes(pid)) st = '<span class="st ok">✓ gewählt</span>';
       else if (pid === turn.next) st = '<span class="st now">ist dran</span>';
       else st = '<span class="st">wartet</span>';
-      return `<div class="hp${pid === turn.next && !cur.revealed ? ' now' : ''}${lv === 0 ? ' out' : ''}${pid === me ? ' me' : ''}" style="--pc:${esc(p.color)}"${pid === me ? ' title="Das bist du"' : ''}>${avatar(p, 'sm', { crown: false })}<div class="hp-t"><b>${esc(p.name)}</b><span class="hp-m">${hearts(lv, hol.lives)}<span class="hp-w" title="gewonnene Runden">🏆${d.stats[pid].wins}</span></span>${st}</div></div>`;
+      return `<div class="hp${pid === turn.next && !cur.revealed ? ' now' : ''}${lv === 0 ? ' out' : ''}${pid === me ? ' me' : ''}" style="--pc:${esc(p.color)}"${pid === me ? ' title="Das bist du"' : ''}>${meTag(pid)}${avatar(p, 'sm', { crown: false })}<div class="hp-t"><b>${esc(p.name)}</b><span class="hp-m">${hearts(lv, hol.lives)}<span class="hp-w" title="gewonnene Runden">🏆${d.stats[pid].wins}</span></span>${st}</div></div>`;
     }).join('');
     const card = cur.card;
-    const cardHtml = `<section class="hol-card${cur.revealed ? ' revealed' : ''}"><div class="hc-k">Karte ${cur.ci + 1} von ${cur.deck.cards.length}</div><div class="hc-e" aria-hidden="true">${esc(card.emoji)}</div><div class="hc-n">${esc(card.name)}</div>${card.sub ? `<div class="hc-s">${esc(card.sub)}</div>` : ''}<div class="hc-v${cur.revealed ? '' : ' q'}">${cur.revealed ? esc(holValue(cat, card.value)) : '?'}</div></section>`;
+    const val = esc(holValue(cat, card.value));
+    const valHtml = cur.revealed ? `<div class="hc-v">${val}</div>`
+      : qmView ? `<div class="hc-v qm">${val}</div><div class="hc-qm">🔒 Nur du siehst die Lösung</div>`
+        : '<div class="hc-v q">?</div>';
+    const cardHtml = `<section class="hol-card${cur.revealed ? ' revealed' : ''}"><div class="hc-k">Karte ${cur.ci + 1} von ${cur.deck.cards.length}</div><div class="hc-e" aria-hidden="true">${esc(card.emoji)}</div><div class="hc-n">${esc(card.name)}</div>${card.sub ? `<div class="hc-s">${esc(card.sub)}</div>` : ''}${valHtml}</section>`;
+    const qmP = qmPerson();
     let prompt = '';
     let foot = '';
     if (cur.revealed) {
@@ -1777,6 +2004,19 @@
       prompt = `<section class="rv" aria-live="polite">${rows}${msg}</section>`;
       const label = cur.ended ? (cur.ri >= total - 1 ? 'Zum Endstand' : 'Nächste Runde') : 'Nächste Karte';
       foot = `<button class="btn primary block" type="button" data-g="next">${label}</button>`;
+    } else if (cur.ready) {
+      // Alle haben gewählt, der Quizmaster deckt auf
+      if (qmView) {
+        const rows = cur.active.map((pid) => {
+          const p = playerById(pid);
+          const r = cur.res[pid];
+          return `<div class="rv-row ${r.ok ? 'ok' : 'bad'}">${avatar(p, 'xs', { crown: false })}<b>${esc(p.name)}</b><span class="rv-g">${esc(describeGap(cur.timelineBefore, r.gap))}</span><span class="rv-m">${r.ok ? '✓' : '✗'}</span></div>`;
+        }).join('');
+        prompt = `<section class="qm-peek" aria-live="polite"><div class="eyebrow">🔒 Nur du siehst das · Alle haben gewählt</div>${rows}${cur.wipeout ? '<p class="rv-msg">Alle liegen falsch, deshalb fliegt diesmal niemand raus.</p>' : ''}</section>`;
+        foot = '<button class="btn primary block qm-go" type="button" data-g="reveal">Aufdecken</button>';
+      } else {
+        prompt = `<p class="g-prompt wait">${avatar(qmP, 'xs', { crown: false })}<span>Alle haben gewählt. <b>${esc(qmP.name)}</b> deckt gleich auf …</span></p>${local.tv ? '' : '<button class="link-btn g-help" type="button" data-g="noqm" data-k="hol">Quizmaster nicht da? Selbst aufdecken</button>'}`;
+      }
     } else if (canAct) {
       const who = syncing && me === turn.next ? 'Du bist dran!' : `${esc(nextP.name)} ist dran.`;
       prompt = `<p class="g-prompt"><b>${who}</b> Tippe auf die Lücke, in die die Karte gehört.</p>`;
@@ -1784,9 +2024,10 @@
     } else if (!syncing && nextP) {
       prompt = `<div class="handoff" style="--pc:${esc(nextP.color)}">${avatar(nextP, 'lg', { crown: false })}<p>Gib das Handy an <b>${esc(nextP.name)}</b>. Die anderen schauen weg.</p><button class="btn primary" type="button" data-g="ready">Ich bin ${esc(nextP.name)} – los</button></div>`;
     } else if (nextP) {
-      prompt = `<p class="g-prompt wait">${avatar(nextP, 'xs', { crown: false })}<b>${esc(nextP.name)}</b> ist dran …</p>${local.tv ? '' : `<button class="link-btn g-proxy" type="button" data-g="proxy">${esc(nextP.name)} hat kein Handy? Hier für ${esc(nextP.name)} tippen</button>`}`;
+      const hint = qmView ? `<p class="qm-hint">🔒 Gehört ${esc(describeGap(cur.timelineBefore, holGapOf(cur.timelineBefore, card.value)))}</p>` : '';
+      prompt = roleCta() + `<p class="g-prompt wait">${avatar(nextP, 'xs', { crown: false })}<b>${esc(nextP.name)}</b> ist dran …</p>${hint}${holProxyHtml(nextP)}`;
     }
-    return gameHead(`<div class="eyebrow">Higher or Lower · Runde ${cur.ri + 1} von ${total}</div><div class="g-title">${esc(cat.emoji)} ${esc(cat.name)}</div>${cat.note ? `<div class="g-note">${esc(cat.note)}</div>` : ''}`)
+    return gameHead(`<div class="eyebrow">Higher or Lower · Runde ${cur.ri + 1} von ${total}</div><div class="g-title">${esc(cat.emoji)} ${esc(cat.name)}</div>${cat.note ? `<div class="g-note">${esc(cat.note)}</div>` : ''}`, gameRoleBtn())
       + `<div class="hol-players">${strip}</div><div class="hol-main">${cardHtml}<div class="hol-side">${prompt}${holLineHtml(cur, canAct)}</div></div>`
       + (foot ? `<div class="g-foot">${foot}</div>` : '')
       + (local.tv ? '' : '<button class="link-btn g-abort" type="button" data-g="abort">Spiel abbrechen</button>');
@@ -1811,7 +2052,7 @@
   function buzzStart(slotId) {
     const slot = slotList().find((s) => s.id === slotId) || null;
     const game = slot && slot.game ? slot.game : state.games.find((g) => g.buzzer) || null;
-    if (Sync.active() && !local.me) { openWhoAmI(() => buzzStart(slotId)); return; }
+    if (needsRole()) { openWhoAmI(() => buzzStart(slotId)); return; }
     if (!live('bz')) {
       const id = 'b' + uid();
       commit((st) => {
@@ -1935,8 +2176,7 @@
     const host = !syncing || isHost();
     const game = gameById(bz.gameId);
     const winner = bz.winner ? playerById(bz.winner) : null;
-    const head = gameHead(`<div class="eyebrow">Buzzer${game ? ' · ' + esc(game.name) : ''}</div><div class="g-title">Frage ${bz.q}</div>`,
-      syncing && !local.tv ? `<button class="link-btn role-btn" type="button" data-g="role">${esc(roleLabel())}</button>` : '');
+    const head = gameHead(`<div class="eyebrow">Buzzer${game ? ' · ' + esc(game.name) : ''}</div><div class="g-title">Frage ${bz.q}</div>`, gameRoleBtn());
     let orderHtml = '';
     if (winner && bz.order && bz.order.length > 1) {
       const t0 = (buzzOf(bz.winner) || {}).t || 0;
@@ -1978,8 +2218,8 @@
       return head + (winHtml || `<div class="bz-zone"><button class="bz-btn ${cls}" type="button" data-g="buzz" style="--pc:${esc(p.color)}">${label}</button><p class="bz-sub">${sub}</p></div>`) + scores;
     }
     if (host && !local.tv) return head + (winHtml || statusLine) + hostCtl() + scores + foot;
-    return head + (winHtml || statusLine) + scores
-      + (local.tv ? '' : '<p class="note" style="text-align:center">Dieses Gerät schaut nur zu. Oben rechts kannst du einen Spieler oder den Spielleiter wählen.</p>');
+    return head + roleCta() + (winHtml || statusLine) + scores
+      + (local.tv || needsRole() ? '' : `<p class="note" style="text-align:center">Dieses Gerät schaut nur zu. Den Buzzer bedient ${esc(qmName())} als Quizmaster.</p>`);
   }
 
   /* ---------- Bluff ----------
@@ -2070,13 +2310,13 @@
     const game = slot && slot.game ? slot.game : state.games.find((g) => g.mode === 'bluff') || null;
     if (live('bluff')) { ui.gameOpen = 'bluff'; render(); return; }
     if (!bluffQuestions().length) { toast('Keine Bluff-Fragen gefunden (bluff-data.js fehlt).'); return; }
-    if (Sync.active() && !local.me) { openWhoAmI(() => bluffStart(slotId)); return; }
+    if (needsRole()) { openWhoAmI(() => bluffStart(slotId)); return; }
     const s = bluffSettings(game);
     const qs = bluffPick(s.questions);
     const id = 'f' + uid();
     commit((st) => {
       Object.keys(st.live).forEach((k) => { if (k.indexOf('blA_') === 0) delete st.live[k]; });
-      st.live.bluff = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', qs, i: 0, players: st.players.map((p) => p.id), dbl: s.doubleLast, sug: s.suggest, startedAt: Date.now() };
+      st.live.bluff = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', qs, i: 0, players: st.players.map((p) => p.id), dbl: s.doubleLast, sug: s.suggest, startedAt: Date.now(), qm: qmPresent() };
       st.bluffPlays[qs[0]] = (st.bluffPlays[qs[0]] || 0) + 1;
     }, { render: false });
     ui.gameOpen = 'bluff';
@@ -2227,11 +2467,29 @@
     }
     return '';
   }
+  // Wie weit hat der Quizmaster bei dieser Frage schon aufgedeckt?
+  const bluffStep = (bl, cur) => (bl.rv && bl.rv.qi === cur.qi ? Number(bl.rv.step) || 0 : 0);
+  function bluffRevealStep() {
+    const bl = live('bluff');
+    if (!bl) return;
+    const cur = bluffDerive(bl).cur;
+    if (!cur || cur.phase !== 'reveal' || !cur.q) return;
+    const total = cur.options.length;
+    commit((st) => {
+      const b = st.live.bluff;
+      if (!b || b.id !== bl.id || b.i !== bl.i) return;
+      const s0 = b.rv && b.rv.qi === b.i ? Number(b.rv.step) || 0 : 0;
+      if (s0 < total) b.rv = { qi: b.i, step: s0 + 1 };
+    }, { render: false });
+    initAudio();
+    render();
+  }
   function bluffNext() {
     const bl = live('bluff');
     if (!bl) return;
     const cur = bluffDerive(bl).cur;
     if (!cur || cur.phase !== 'reveal') return;
+    if (bl.qm && cur.q && bluffStep(bl, cur) < cur.options.length) return; // erst fertig aufdecken
     commit((st) => {
       const b = st.live.bluff;
       if (!b || b.id !== bl.id || b.i !== bl.i) return; // jemand war schneller
@@ -2298,6 +2556,7 @@
     const q = cur.q;
     const me = myId();
     const syncing = Sync.active();
+    const qmView = syncing && isHost() && !local.tv; // nur der Quizmaster sieht Wahrheit und Lügen vorher
     const order = bluffOrder(d);
     const pending = cur.phase === 'write' ? cur.writing : cur.phase === 'vote' ? cur.voting : [];
     const nextP = playerById(order.find((pid) => pending.includes(pid)));
@@ -2310,7 +2569,9 @@
       else if (me && pending.includes(me)) actor = me;
     }
     // Während der Auflösung bleiben die Punkte verdeckt, bis die Wahrheit aufgedeckt ist.
-    const rvPending = cur.phase === 'reveal' && (() => { const c = bluffRvClock(bl, cur); return c.elapsed < c.truthAt; })();
+    const rvPending = cur.phase === 'reveal' && (bl.qm
+      ? bluffStep(bl, cur) < cur.options.length
+      : (() => { const c = bluffRvClock(bl, cur); return c.elapsed < c.truthAt; })());
     const strip = d.players.map((pid) => {
       const p = playerById(pid);
       let st;
@@ -2319,21 +2580,29 @@
       else if (rvPending) st = '<span class="st">…</span>';
       else st = cur.gains[pid] ? `<span class="st ok">+${cur.gains[pid]}</span>` : '<span class="st">±0</span>';
       const pts = rvPending ? d.totals[pid] - cur.gains[pid] : d.totals[pid];
-      return `<div class="hp${pid === me ? ' me' : ''}${actor === pid ? ' now' : ''}" style="--pc:${esc(p.color)}"${pid === me ? ' title="Das bist du"' : ''}>${avatar(p, 'sm', { crown: false })}<div class="hp-t"><b>${esc(p.name)}</b><span class="hp-m"><span class="bl-pts">${fmtPts(pts)} P.</span></span>${st}</div></div>`;
+      return `<div class="hp${pid === me ? ' me' : ''}${actor === pid ? ' now' : ''}" style="--pc:${esc(p.color)}"${pid === me ? ' title="Das bist du"' : ''}>${meTag(pid)}${avatar(p, 'sm', { crown: false })}<div class="hp-t"><b>${esc(p.name)}</b><span class="hp-m"><span class="bl-pts">${fmtPts(pts)} P.</span></span>${st}</div></div>`;
     }).join('');
-    const card = `<section class="bl-card${cur.phase === 'reveal' ? ' mini' : ''}"><div class="hc-k">Frage ${cur.qi + 1} von ${total}${cur.mult > 1 ? ' · <span class="bl-x2">zählt doppelt</span>' : ''}</div><div class="bl-cat">${esc(q.cat)}</div><p class="bl-q">${bluffSentence(q, false)}</p></section>`;
-    const head = gameHead(`<div class="eyebrow">Bluff · Frage ${cur.qi + 1} von ${total}</div><div class="g-title">${cur.phase === 'write' ? 'Erfinde eine Antwort' : cur.phase === 'vote' ? 'Was ist die Wahrheit?' : 'Auflösung'}</div>`,
-      syncing && !local.tv ? `<button class="link-btn role-btn" type="button" data-g="role">${esc(roleLabel())}</button>` : '');
+    const truthBox = qmView && cur.phase !== 'reveal' ? `<div class="bl-qm-truth"><span>🔒 Die Wahrheit · nur du siehst sie</span><b>${esc(bluffFmt(q.a))}</b></div>` : '';
+    const card = `<section class="bl-card${cur.phase === 'reveal' ? ' mini' : ''}"><div class="hc-k">Frage ${cur.qi + 1} von ${total}${cur.mult > 1 ? ' · <span class="bl-x2">zählt doppelt</span>' : ''}</div><div class="bl-cat">${esc(q.cat)}</div><p class="bl-q">${bluffSentence(q, false)}</p>${truthBox}</section>`;
+    const head = gameHead(`<div class="eyebrow">Bluff · Frage ${cur.qi + 1} von ${total}</div><div class="g-title">${cur.phase === 'write' ? 'Erfinde eine Antwort' : cur.phase === 'vote' ? 'Was ist die Wahrheit?' : 'Auflösung'}</div>`, gameRoleBtn());
     const a = head + `<div class="hol-players bl-players">${strip}</div>` + card;
     let composer = null;
     let b = '';
     const abort = local.tv ? '' : '<button class="link-btn g-abort" type="button" data-g="bl-abort">Spiel abbrechen</button>';
-    const proxyLinks = (verb) => (local.tv || !syncing ? '' : pending.filter((pid) => pid !== me && pid !== actor).map((pid) => {
-      const p = playerById(pid);
-      return `<button class="link-btn g-proxy" type="button" data-g="bl-proxy" data-pid="${esc(pid)}">${esc(p.name)} hat kein Handy? Hier für ${esc(p.name)} ${verb}</button>`;
-    }).join(''));
+    // Für andere tippen: direkt nur für Spieler ohne eigenes Handy, sonst ein kleiner Notfall-Link
+    const proxyLinks = (verb) => {
+      if (local.tv || !syncing || needsRole()) return '';
+      const others = pending.filter((pid) => pid !== me && pid !== actor);
+      const direct = others.filter((pid) => !hasDevice(pid)).map((pid) => {
+        const p = playerById(pid);
+        return `<button class="link-btn g-proxy" type="button" data-g="bl-proxy" data-pid="${esc(pid)}">${esc(p.name)} hat kein Handy? Hier für ${esc(p.name)} ${verb}</button>`;
+      }).join('');
+      const withPhone = others.filter((pid) => hasDevice(pid));
+      return direct + (withPhone.length && !actor ? `<button class="link-btn g-help" type="button" data-g="bl-help">Ein Handy streikt? Für jemand anderen ${verb}</button>` : '');
+    };
     const handoff = (p, what) => `<div class="handoff" style="--pc:${esc(p.color)}">${avatar(p, 'lg', { crown: false })}<p>Gib das Handy an <b>${esc(p.name)}</b>. Die anderen schauen weg.</p><p class="note">${what}</p><button class="btn primary" type="button" data-g="bl-ready">Ich bin ${esc(p.name)} – los</button></div>`;
     const waiting = (list, verb) => `<p class="g-prompt wait">${list.map((pid) => avatar(playerById(pid), 'xs', { crown: false })).join('')}<span>Warte auf <b>${nameList(list)}</b> – ${verb} noch.</span></p>`;
+    const chips = (ids) => ids.map((pid) => { const p = playerById(pid); return p ? `<span class="bl-chip" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}${esc(p.name)}</span>` : ''; }).join('');
 
     if (cur.phase === 'write') {
       if (actor) {
@@ -2355,7 +2624,12 @@
       } else if (!syncing && nextP) {
         b = handoff(nextP, 'Du schreibst eine erfundene Antwort, die die anderen für wahr halten sollen.') + abort;
       } else {
-        b = (cur.writing.length ? waiting(cur.writing, cur.writing.length > 1 ? 'sie schreiben' : 'schreibt') : '') + proxyLinks('schreiben') + abort;
+        // Der Quizmaster sieht die eingehenden Lügen mit Namen
+        const peek = qmView ? `<section class="qm-peek"><div class="eyebrow">🔒 Eingegangene Lügen</div>${d.players.map((pid) => {
+          const p = playerById(pid);
+          return `<div class="qm-line" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}<b>${esc(p.name)}</b><span>${cur.lies[pid] != null ? '„' + esc(cur.lies[pid]) + '“' : '<i>schreibt …</i>'}</span></div>`;
+        }).join('')}</section>` : '';
+        b = roleCta() + peek + (cur.writing.length ? waiting(cur.writing, cur.writing.length > 1 ? 'sie schreiben' : 'schreibt') : '') + proxyLinks('schreiben') + abort;
       }
     } else if (cur.phase === 'vote') {
       const optHtml = (o, opts) => {
@@ -2373,13 +2647,18 @@
           <div class="g-foot"><button class="btn primary block" type="button" data-g="bl-vote" data-pid="${esc(actor)}"${ui.blSel ? '' : ' disabled'}>Festlegen</button></div>` + proxyLinks('wählen') + abort;
       } else if (!syncing && nextP) {
         b = handoff(nextP, 'Du tippst auf die Antwort, die du für wahr hältst.') + abort;
+      } else if (qmView) {
+        // Spickzettel: wer hat was geschrieben, wer hat was gewählt
+        const voters = (k) => d.players.filter((pid) => cur.votes[pid] === k);
+        const list = cur.options.map((o) => `<div class="bl-opt ro qm-opt${o.truth ? ' truth' : ''}"><span class="qm-o-t">${esc(o.text)}${o.truth ? ' <small>Wahrheit</small>' : ''}</span><span class="qm-o-m">${o.truth ? '' : '<span class="qm-o-l">von</span>' + chips(o.authors)}${voters(o.key).length ? '<span class="qm-o-l">gewählt:</span>' + chips(voters(o.key)) : ''}</span></div>`).join('');
+        b = `<section class="qm-peek"><div class="eyebrow">🔒 Nur du siehst, von wem die Lügen sind</div><div class="bl-opts">${list}</div></section>` + (cur.voting.length ? waiting(cur.voting, cur.voting.length > 1 ? 'sie wählen' : 'wählt') : '') + proxyLinks('wählen') + abort;
       } else {
         const mineVote = me ? cur.votes[me] : null;
         const list = cur.options.map((o) => optHtml(o, { own: !!me && o.authors.includes(me), mine: !!mineVote && mineVote === o.key })).join('');
-        b = `<div class="bl-opts">${list}</div>` + (cur.voting.length ? waiting(cur.voting, cur.voting.length > 1 ? 'sie wählen' : 'wählt') : '') + proxyLinks('wählen') + abort;
+        b = roleCta() + `<div class="bl-opts">${list}</div>` + (cur.voting.length ? waiting(cur.voting, cur.voting.length > 1 ? 'sie wählen' : 'wählt') : '') + proxyLinks('wählen') + abort;
       }
     } else {
-      b = bluffRevealHtml(bl, d) + abort;
+      b = bluffRevealHtml(bl, d, qmView) + abort;
     }
     return { a, composer, b };
   }
@@ -2391,7 +2670,7 @@
     if (!ui.blRv || ui.blRv.key !== key) {
       ui.blRv = { key, start: Date.now() };
       // Kleiner Tusch, wenn die Wahrheit aufgedeckt wird
-      if (!ui.booting) [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.24, 'triangle', 0.08, truthAt + i * 0.09));
+      if (!ui.booting) truthSound(truthAt);
       setTimeout(() => {
         if (!ui.blRv || ui.blRv.key !== key || ui.gameOpen !== 'bluff') return;
         renderGame();
@@ -2401,40 +2680,76 @@
     }
     return { key, truthAt, elapsed: (Date.now() - ui.blRv.start) / 1000 };
   }
-  // Auflösung: erst die Lügen (die mit den wenigsten Stimmen zuerst), zum Schluss die Wahrheit
-  function bluffRevealHtml(bl, d) {
+  const truthSound = (delay = 0) => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.24, 'triangle', 0.08, delay + i * 0.09));
+  // Reihenfolge der Auflösung: erst die Lügen (die mit den wenigsten Stimmen zuerst), zum Schluss die Wahrheit
+  function bluffRvItems(cur, players) {
+    const voters = (k) => players.filter((pid) => cur.votes[pid] === k);
+    const lies = cur.options.filter((o) => !o.truth).sort((x, y) => voters(x.key).length - voters(y.key).length);
+    const truth = cur.options.find((o) => o.truth);
+    return lies.concat(truth ? [truth] : []).map((o) => ({ o, voters: voters(o.key) }));
+  }
+  // Auflösung: von selbst nacheinander, oder Schritt für Schritt vom Quizmaster
+  function bluffRevealHtml(bl, d, qmView) {
     const cur = d.cur;
     const q = cur.q;
-    const { elapsed } = bluffRvClock(bl, cur);
-    const delay = (t) => `animation-delay:${(t - elapsed).toFixed(2)}s`;
-    const voters = (k) => d.players.filter((pid) => cur.votes[pid] === k);
+    const items = bluffRvItems(cur, d.players);
+    const qm = !!bl.qm;
+    const step = qm ? Math.min(bluffStep(bl, cur), items.length) : items.length;
+    let delay;
+    let elapsedAuto = 0;
+    const autoAt = (i) => 0.4 + i * 1.5 + (i === items.length - 1 ? 0.5 : 0);
+    if (qm) {
+      // Jede aufgedeckte Karte wird nur beim ersten Erscheinen animiert
+      delay = (i) => {
+        const k = `${bl.id}:${cur.qi}:${i}`;
+        if (ui.blRvT[k] == null) ui.blRvT[k] = ui.booting ? Date.now() - 5000 : Date.now();
+        return `animation-delay:${(-(Date.now() - ui.blRvT[k]) / 1000).toFixed(2)}s`;
+      };
+    } else {
+      elapsedAuto = bluffRvClock(bl, cur).elapsed;
+      delay = (i) => `animation-delay:${(autoAt(i) - elapsedAuto).toFixed(2)}s`;
+    }
     const chips = (ids, plus) => ids.map((pid) => { const p = playerById(pid); return `<span class="bl-chip" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}${esc(p.name)}${plus ? ` <b>+${plus}</b>` : ''}</span>`; }).join('');
-    const lies = cur.options.filter((o) => !o.truth).sort((x, y) => voters(x.key).length - voters(y.key).length);
-    let t = 0.4;
-    const cards = lies.map((o) => {
-      const v = voters(o.key);
+    const cards = items.slice(0, step).map((it, i) => {
+      const o = it.o;
+      const v = it.voters;
+      if (o.truth) {
+        return `<div class="bl-rv truth" style="${delay(i)}">
+          <div class="bl-rv-k">Die Wahrheit</div>
+          <div class="bl-rv-t">${esc(bluffFmt(q.a))}</div>
+          <p class="bl-rv-s">${bluffSentence(q, true)}</p>
+          <div class="bl-rv-who">${v.length ? chips(v, BLUFF_TRUTH * cur.mult) : '<span>Keiner hat die Wahrheit gefunden!</span>'}</div>
+          ${q.src ? `<a class="bl-src" href="${esc(q.src)}" target="_blank" rel="noopener">Quelle</a>` : ''}
+        </div>`;
+      }
       const pts = BLUFF_FOOL * cur.mult * v.length;
-      const html = `<div class="bl-rv lie" style="${delay(t)}">
+      return `<div class="bl-rv lie" style="${delay(i)}">
         <div class="bl-rv-t">„${esc(o.text)}“</div>
         <div class="bl-rv-who">${v.length ? chips(v) + `<span>${v.length > 1 ? 'sind' : 'ist'} drauf reingefallen</span>` : '<span>Keiner ist drauf reingefallen</span>'}</div>
         <div class="bl-rv-by">Gelogen von ${chips(o.authors)}${pts ? ` <b class="bl-plus">+${pts}${o.authors.length > 1 ? ' für jeden' : ''}</b>` : ''}</div>
       </div>`;
-      t += 1.5;
-      return html;
     }).join('');
-    const truth = cur.options.find((o) => o.truth);
-    const finders = truth ? voters('T') : [];
-    t += 0.5;
-    const truthHtml = `<div class="bl-rv truth" style="${delay(t)}">
-      <div class="bl-rv-k">Die Wahrheit</div>
-      <div class="bl-rv-t">${esc(bluffFmt(q.a))}</div>
-      <p class="bl-rv-s">${bluffSentence(q, true)}</p>
-      <div class="bl-rv-who">${finders.length ? chips(finders, BLUFF_TRUTH * cur.mult) : '<span>Keiner hat die Wahrheit gefunden!</span>'}</div>
-      ${q.src ? `<a class="bl-src" href="${esc(q.src)}" target="_blank" rel="noopener">Quelle</a>` : ''}
-    </div>`;
     const lastQ = cur.qi >= bl.qs.length - 1;
-    const foot = local.tv ? '' : `<div class="g-foot bl-late" style="${delay(t + 0.6)}"><button class="btn primary block" type="button" data-g="bl-next">${lastQ ? 'Zum Endstand' : 'Nächste Frage'}</button></div>`;
-    return `<section class="bl-rvs" aria-live="polite">${cards}${truthHtml}</section>${foot}`;
+    const nextBtn = `<button class="btn primary block" type="button" data-g="bl-next">${lastQ ? 'Zum Endstand' : 'Nächste Frage'}</button>`;
+    if (!qm) {
+      const foot = local.tv ? '' : `<div class="g-foot bl-late" style="animation-delay:${(autoAt(items.length - 1) + 0.6 - elapsedAuto).toFixed(2)}s">${nextBtn}</div>`;
+      return `<section class="bl-rvs" aria-live="polite">${cards}</section>${foot}`;
+    }
+    const done = step >= items.length;
+    const qmP = qmPerson();
+    let ctl = '';
+    if (qmView) {
+      if (!done) {
+        const nx = items[step];
+        const what = nx.o.truth ? 'Als Nächstes: <b>die Wahrheit</b>' : `Als Nächstes: <b>„${esc(nx.o.text)}“</b> von ${nameList(nx.o.authors)} · ${nx.voters.length} ${plural(nx.voters.length, 'Stimme', 'Stimmen')}`;
+        const lieNo = items.filter((x) => !x.o.truth).length;
+        const label = nx.o.truth ? 'Wahrheit aufdecken' : `Lüge aufdecken (${step + 1} von ${lieNo})`;
+        ctl = `<p class="qm-hint">🔒 ${what}</p><div class="g-foot"><button class="btn primary block qm-go" type="button" data-g="bl-step">${label}</button></div>`;
+      } else ctl = `<div class="g-foot">${nextBtn}</div>`;
+    } else if (!done) {
+      ctl = `<p class="g-prompt wait">${avatar(qmP, 'xs', { crown: false })}<span>${step ? `<b>${esc(qmP.name)}</b> deckt weiter auf …` : `Alle haben gewählt. <b>${esc(qmP.name)}</b> deckt gleich auf …`}</span></p>${local.tv ? '' : '<button class="link-btn g-help" type="button" data-g="noqm" data-k="bluff">Quizmaster nicht da? Selbst aufdecken</button>'}`;
+    } else if (!local.tv) ctl = `<div class="g-foot">${nextBtn}</div>`;
+    return `<section class="bl-rvs" aria-live="polite">${cards}</section>${ctl}`;
   }
   function bluffFinalHtml(bl, d) {
     const rows = bluffStandings(d);
@@ -2530,6 +2845,19 @@
       if (ok) { ui.blProxy = p.id; ui.blSel = null; ui.blWarn = null; renderGame(); }
       return;
     }
+    if (a === 'bl-help') {
+      const cur = bluffDerive(bl).cur;
+      const pend = cur.phase === 'write' ? cur.writing : cur.phase === 'vote' ? cur.voting : [];
+      const list = pend.filter((pid) => pid !== myId() && playerById(pid));
+      if (!list.length) return;
+      openSheet({
+        title: 'Für wen tippen?',
+        body: () => `<p class="sheet-text">Nur wenn ein Handy gerade nicht geht. Die Person sagt dir leise, was du ${cur.phase === 'write' ? 'als Lüge eintippen' : 'wählen'} sollst.</p><div class="who-grid">${list.map((pid) => { const p = playerById(pid); return `<button class="who-btn" type="button" data-s="pick" data-v="${esc(pid)}" style="--pc:${esc(p.color)}">${avatar(p, '', { crown: false })}<span>${esc(p.name)}</span></button>`; }).join('')}</div>`,
+        on: (x, el, ev, api) => { if (x !== 'pick') return; ui.blProxy = el.dataset.v; ui.blSel = null; ui.blWarn = null; api.close(); renderGame(); },
+      });
+      return;
+    }
+    if (a === 'bl-step') { bluffRevealStep(); return; }
     if (a === 'bl-next') { bluffNext(); return; }
     if (a === 'bl-save') { bluffSaveResult(); return; }
     if (a === 'bl-end' || a === 'bl-abort') {
@@ -2542,11 +2870,26 @@
   function gameSync() {
     const hol = live('hol');
     if (hol && hol.status === 'play' && hol.id !== ui.gameSeen) { ui.gameSeen = hol.id; ui.gameOpen = 'hol'; ui.holSel = null; ui.holProxy = null; }
+    // Tusch, wenn der Quizmaster eine Karte aufdeckt
+    const rvKey = hol ? hol.id + ':' + (hol.rv || '') : null;
+    if (rvKey !== ui.holRvSeen) {
+      if (ui.holRvSeen != null && hol && hol.rv && !ui.booting) revealSound();
+      ui.holRvSeen = rvKey;
+    }
     const bz = live('bz');
     if (bz && bz.id !== ui.bzSeen) { ui.bzSeen = bz.id; ui.gameOpen = 'bz'; }
     const bl = live('bluff');
     if (bl && bl.status === 'play' && bl.id !== ui.bluffSeen) { ui.bluffSeen = bl.id; ui.gameOpen = 'bluff'; bluffResetUi(); }
     if (bl && ui.blQ !== bl.id + ':' + bl.i) { ui.blQ = bl.id + ':' + bl.i; bluffResetUi(); }
+    // Ton, wenn der Quizmaster eine Lüge oder die Wahrheit aufdeckt
+    const stepKey = bl ? bl.id + ':' + (bl.qm && bl.rv ? bl.rv.qi + ':' + bl.rv.step : '-') : null;
+    if (stepKey !== ui.blStepSeen) {
+      if (ui.blStepSeen != null && bl && bl.qm && bl.rv && !ui.booting) {
+        const c = bluffDerive(bl).cur;
+        if (c && c.options && bl.rv.qi === c.qi && bl.rv.step >= c.options.length) truthSound(0); else revealSound();
+      }
+      ui.blStepSeen = stepKey;
+    }
     if (ui.gameOpen === 'bluff' && !bl) ui.gameOpen = null;
     if (ui.gameOpen === 'hol' && !hol) ui.gameOpen = null;
     if (ui.gameOpen === 'bz' && !bz) ui.gameOpen = null;
@@ -2612,10 +2955,13 @@
       const t = holTurn(holDerive(hol).cur);
       const p = playerById(t.next);
       if (!p) return;
-      const ok = await confirmSheet({ title: `Für ${p.name} tippen?`, text: `Nur wenn ${p.name} kein Handy dabei hat. ${p.name} sagt dir, wo die Karte hingehört.`, ok: `Für ${p.name} tippen` });
+      const why = hasDevice(p.id) ? `${p.name} hat ein eigenes Handy. Nur nutzen, wenn es gerade nicht geht.` : `Nur wenn ${p.name} kein Handy dabei hat.`;
+      const ok = await confirmSheet({ title: `Für ${p.name} tippen?`, text: `${why} ${p.name} sagt dir, wo die Karte hingehört.`, ok: `Für ${p.name} tippen` });
       if (ok) { ui.holProxy = p.id; ui.holSel = null; renderGame(); }
       return;
     }
+    if (a === 'reveal') { holReveal(); return; }
+    if (a === 'noqm') { gameNoQm(b.dataset.k); return; }
     if (a === 'next') { holNext(); return; }
     if (a === 'save') { holSaveResult(); return; }
     if (a === 'end' || a === 'abort') {
@@ -2895,6 +3241,9 @@
   }
   function resolveSpinFor() {
     if (ui.spinFor && playerById(ui.spinFor)) return ui.spinFor;
+    // Auf dem eigenen Handy dreht man zuerst für sich selbst
+    const me = myId();
+    if (me && !state.wheel.current[me]) return me;
     const open = state.players.find((p) => !state.wheel.current[p.id]);
     return open ? open.id : state.players[0] ? state.players[0].id : null;
   }
@@ -3168,6 +3517,68 @@
     });
   }
 
+  /* ---------- Quizmaster ---------- */
+  const QM_EMOJIS = ['🎤', '🎩', '🦉', '🧙', '🦸', '🎙️', '👑', '🌟', '🎬', '🧠', '🎲', '🔔'];
+  function openQmForm(welcome) {
+    const draft = { name: welcome && state.qm.name === 'Quizmaster' ? '' : state.qm.name, emoji: state.qm.emoji, photo: photoOf('host') };
+    openSheet({
+      title: welcome ? 'Hallo Quizmaster!' : 'Quizmaster',
+      body: () => `<p class="sheet-text">${welcome ? 'Wie heißt du? Dein Name erscheint auf den Handys und auf dem Fernseher.' : 'Der Quizmaster spielt nicht mit und steht nicht in der Tabelle. Er leitet den Quizblock.'}</p>
+        <div class="photo-row"><span class="avatar lg" style="--pc:${QM_COLOR}" aria-hidden="true">${draft.photo ? `<img src="${esc(draft.photo)}" alt="">` : esc(draft.emoji)}</span><div class="photo-btns"><button class="btn ghost small" type="button" data-s="photo">${draft.photo ? 'Anderes Foto' : 'Foto aufnehmen oder wählen'}</button>${draft.photo ? '<button class="link-btn danger" type="button" data-s="nophoto">Foto entfernen</button>' : ''}</div></div>
+        <label class="field"><span>Name</span><input class="input" id="qf-name" maxlength="16" value="${esc(draft.name)}" placeholder="Quizmaster" autocomplete="off"></label>
+        <div class="field"><span class="label">Symbol</span><div class="emoji-grid">${QM_EMOJIS.map((e) => `<button type="button" data-s="emoji" data-v="${e}" aria-pressed="${draft.emoji === e}" aria-label="Symbol ${e}">${e}</button>`).join('')}</div></div>
+        <button class="btn primary" type="button" data-s="save">Speichern</button>`,
+      onInput: (el) => { if (el.id === 'qf-name') draft.name = el.value; },
+      on: (a, el, ev, api) => {
+        if (a === 'emoji') { draft.emoji = el.dataset.v; api.refresh(); }
+        if (a === 'photo') pickImage({ max: 256, square: true }, (data) => { draft.photo = data; if (!api.closed) api.refresh(); });
+        if (a === 'nophoto') { draft.photo = null; api.refresh(); }
+        if (a === 'save') {
+          commit((st) => {
+            st.qm = normalizeQm({ name: draft.name.trim() || 'Quizmaster', emoji: draft.emoji });
+            if (draft.photo) st.media.p_host = draft.photo; else delete st.media.p_host;
+          });
+          api.close();
+        }
+      },
+    });
+  }
+  async function qmLeave() {
+    const ok = await confirmSheet({ title: 'Als Quizmaster abmelden?', text: 'Dieses Handy schaut danach nur noch zu. Higher or Lower und Bluff decken dann wieder von selbst auf.', ok: 'Abmelden' });
+    if (!ok) return;
+    setRole('watch');
+    commit((st) => { ['hol', 'bluff'].forEach((k) => { if (st.live[k] && st.live[k].qm) st.live[k].qm = false; }); });
+    toast('Danke fürs Moderieren!');
+  }
+  // Behält nur die Geräte-Anmeldungen (z. B. beim Zurücksetzen)
+  function keepDevs(liveObj) {
+    const o = {};
+    for (const k in liveObj || {}) if (k.indexOf('dev_') === 0) o[k] = liveObj[k];
+    return o;
+  }
+  async function clearResults() {
+    if (!state.results.length && !Object.keys(state.jokerCalls).length && !state.wheel.log.length) { toast('Es gibt keine Ergebnisse zum Zurücksetzen.'); return; }
+    const ok = await confirmSheet({
+      title: 'Ergebnisse zurücksetzen?',
+      text: 'Alle Punkte, angesagten Joker und gedrehten Handicaps dieser GameNight werden gelöscht. Spieler, Spiele, Spielplan und Ruhmeshalle bleiben.' + (Sync.active() ? ' Das gilt für alle verbundenen Handys.' : ''),
+      ok: 'Zurücksetzen', danger: true,
+    });
+    if (!ok) return;
+    const prev = { results: clone(state.results), wheel: clone(state.wheel), jokerCalls: clone(state.jokerCalls) };
+    ui.shownPts = {};
+    ui.gameOpen = null;
+    if (ui.stage) closeCeremony();
+    commit((st) => {
+      st.results = [];
+      st.wheel = emptyWheel();
+      st.jokerCalls = {};
+      st.stage = null;
+      st.live = keepDevs(st.live);
+      st.session.startedAt = Date.now();
+    });
+    toast('Ergebnisse zurückgesetzt', { label: 'Rückgängig', fn: () => commit((st) => { st.results = prev.results; st.wheel = prev.wheel; st.jokerCalls = prev.jokerCalls; }) }, 6000);
+  }
+
   function gameSummary(g) {
     if (g.scoring === 'free') return 'Freie Punkte' + (g.maxPoints != null ? ` · max ${fmtPts(g.maxPoints)}` : '');
     return 'Plätze: ' + g.points.slice(0, state.players.length).map(fmtPts).join(' / ');
@@ -3247,6 +3658,22 @@
     });
   }
 
+  // Ungespielte Quizspiele nach vorne holen: erst Buzzer-Runden (Schätzfragen, Filme), dann
+  // Higher or Lower, zum Schluss Bluff. Gibt null zurück, wenn schon alles passt.
+  function quizFirstPlan() {
+    const played = new Set(state.results.filter((r) => r.slotId).map((r) => r.slotId));
+    const rank = (s) => { const g = gameById(s.gameId); return !isQuizGame(g) ? 9 : g.mode === 'hol' ? 1 : g.mode === 'bluff' ? 2 : 0; };
+    const idx = state.plan.map((s, i) => (played.has(s.id) ? -1 : i)).filter((i) => i >= 0);
+    const open = idx.map((i) => state.plan[i]);
+    const quiz = open.filter((s) => rank(s) < 9).map((s, k) => ({ s, k })).sort((x, y) => rank(x.s) - rank(y.s) || x.k - y.k).map((x) => x.s);
+    if (!quiz.length) return null;
+    const ordered = quiz.concat(open.filter((s) => rank(s) === 9));
+    if (ordered.every((s, k) => s.id === open[k].id)) return null;
+    const next = state.plan.slice();
+    ordered.forEach((s, k) => { next[idx[k]] = s; });
+    return next;
+  }
+
   function openPlanEditor() {
     if (!state.games.length) { toast('Lege zuerst ein Spiel an (Mehr → Spiele & Punkte).'); return; }
     const gameOptions = (sel) => state.games.map((g) => `<option value="${esc(g.id)}"${g.id === sel ? ' selected' : ''}>${esc(g.emoji)} ${esc(g.name)}</option>`).join('');
@@ -3255,7 +3682,9 @@
       body: () => {
         const slots = slotList();
         const addSel = ui.lastAddGame && gameById(ui.lastAddGame) ? ui.lastAddGame : state.games[0].id;
+        const quizMove = quizFirstPlan();
         return `<p class="sheet-text">Die Reihenfolge eures Abends. „×2“ heißt doppelte Punkte. Gespielte Spiele lassen sich nicht mehr tauschen oder löschen.</p>
+        ${quizMove ? '<div class="qm-move"><p class="note">Spiele mit Quizmaster: Schätzfragen und Buzzer-Runden, Higher or Lower, Bluff. Stehen sie vorne, kann der Quizmaster danach gehen.</p><button class="btn ghost small" type="button" data-s="quizFirst">🎤 Quizspiele nach vorne</button></div>' : ''}
         ${slots.length ? `<ol class="pe-list">${slots.map((sl, i) => `<li class="pe-row"><span class="idx">${i + 1}</span><select class="input" data-in="slotGame" data-slot="${esc(sl.id)}" aria-label="Spiel ${i + 1}"${sl.result ? ' disabled' : ''}>${gameOptions(sl.gameId)}</select><span class="tools"><button type="button" class="x2-btn" data-s="x2" data-slot="${esc(sl.id)}" aria-pressed="${sl.multiplier > 1}" aria-label="Doppelte Punkte"${sl.result ? ' disabled' : ''}>×2</button><button type="button" class="icon-btn" data-s="up" data-slot="${esc(sl.id)}" aria-label="Nach oben"${i === 0 ? ' disabled' : ''}>${ICON.up}</button><button type="button" class="icon-btn" data-s="down" data-slot="${esc(sl.id)}" aria-label="Nach unten"${i === slots.length - 1 ? ' disabled' : ''}>${ICON.down}</button><button type="button" class="icon-btn" data-s="del" data-slot="${esc(sl.id)}" aria-label="Entfernen"${sl.result ? ' disabled' : ''}>${ICON.trash}</button></span></li>`).join('')}</ol>` : '<div class="empty-state">Noch keine Spiele im Plan.</div>'}
         <div class="field"><span class="label">Spiel anhängen</span><div class="pe-add"><select class="input" id="pe-add" aria-label="Spiel zum Anhängen">${gameOptions(addSel)}</select><button class="btn primary" type="button" data-s="add">Anhängen</button></div></div>`;
       },
@@ -3272,6 +3701,10 @@
           const gid = (api.body.querySelector('#pe-add') || {}).value || state.games[0].id;
           ui.lastAddGame = gid;
           commit((st) => { st.plan.push({ id: uid(), gameId: gid, multiplier: 1 }); });
+        }
+        if (a === 'quizFirst') {
+          const next = quizFirstPlan();
+          if (next) { commit((st) => { st.plan = next; }); toast('Quizspiele stehen jetzt vorne'); }
         }
         if (a === 'x2') commit((st) => { const sl = st.plan.find((x) => x.id === id); if (sl) sl.multiplier = sl.multiplier > 1 ? 1 : 2; });
         if (a === 'up' || a === 'down') {
@@ -3437,7 +3870,7 @@
       st.wheel = emptyWheel();
       st.jokerCalls = {};
       st.stage = null;
-      st.live = {};
+      st.live = keepDevs(st.live);
       st.session = newSession((Number(st.session.number) || st.archive.length) + 1);
     }, { render: false });
     ui.shownPts = {};
@@ -3513,14 +3946,25 @@
         }
         if (a === 'leave') {
           const ok = await confirmSheet({ title: 'Verbindung trennen?', text: 'Dieses Handy behält den aktuellen Stand, bekommt aber keine Änderungen mehr.', ok: 'Trennen', danger: true });
-          if (ok) { await Sync.leave(); api.refresh(); toast('Live-Sync getrennt'); }
+          if (ok) {
+            // Im Raum abmelden, damit die anderen wissen, dass dieses Handy weg ist
+            commit((st) => { delete st.live['dev_' + local.dev]; }, { render: false, noClaim: true });
+            if (Sync.adapter) { try { await withTimeout(Promise.resolve(Sync.adapter.update({ ['live/dev_' + local.dev]: null })), 3000); } catch (e) { /* egal */ } }
+            await Sync.leave();
+            api.refresh();
+            toast('Live-Sync getrennt');
+          }
         }
         if (a === 'join') {
           const inv = parseInvite(draft.invite);
           if (!inv) { toast('Der Einladungscode ist ungültig.'); return; }
           const ok = await Sync.start({ url: inv.url, room: inv.room, interactive: true });
           if (!api.closed) api.refresh();
-          if (ok) toast('Verbunden');
+          if (ok) {
+            toast('Verbunden');
+            // Gleich festlegen, wer dieses Handy benutzt
+            if (needsRole()) { api.close(); ui.roleAsked = 'app'; setTimeout(() => openWhoAmI(), 260); }
+          }
         }
         if (a === 'create') {
           if (!validUrl(draft.url)) { toast('Die Datenbank-URL sieht nicht richtig aus.'); return; }
@@ -3591,6 +4035,7 @@
         const ok = await confirmSheet({ title: 'Backup laden?', text: 'Der aktuelle Spielstand wird ersetzt' + (Sync.active() ? ', auch auf allen verbundenen Handys.' : '.'), ok: 'Laden', danger: true });
         if (!ok) return;
         const next = migrate(st);
+        next.live = keepDevs(state.live);
         ui.shownPts = {};
         commit((s2) => { Object.keys(s2).forEach((k) => delete s2[k]); Object.assign(s2, next); });
         api.close();
@@ -3609,6 +4054,9 @@
     const fresh = buildDefaults();
     fresh.archive = state.archive;
     fresh.media = {};
+    fresh.live = keepDevs(state.live);
+    fresh.qm = state.qm;
+    if (state.media.p_host) fresh.media.p_host = state.media.p_host;
     Object.keys(state.media).forEach((k) => { if (k.indexOf('w_') === 0) fresh.media[k] = state.media[k]; });
     ui.shownPts = {};
     ui.wheelListId = null;
@@ -4020,9 +4468,12 @@
     buzzStart: (el) => buzzStart(el.dataset.slot),
     gameOpen: (el) => { ui.gameOpen = el.dataset.k; render(); },
     whoAmI: () => openWhoAmI(),
+    editQm: () => openQmForm(false),
+    qmLeave,
+    clearResults,
     tvStart: () => {
       local.tv = true;
-      if (!local.me) local.me = 'watch';
+      if (!roleValid()) { local.me = 'watch'; refreshClaim(true); }
       saveLocal();
       hideToast();
       initAudio();
@@ -4077,7 +4528,7 @@
       requestWake();
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     }, { once: true });
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWake(); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { requestWake(); refreshClaim(); } });
     window.addEventListener('storage', (e) => {
       if (e.key === K_STATE && e.newValue) { try { state = migrate(JSON.parse(e.newValue)); render(); } catch (err) { /* egal */ } }
     });
@@ -4097,6 +4548,8 @@
       setTimeout(() => openSyncSheet({ invite: code }), 350);
     } else if (!local.onboarded && !state.results.length && !local.tv) {
       setTimeout(openOnboarding, 400);
+    } else {
+      setTimeout(maybeAskRole, 700);
     }
   }
 
@@ -4115,6 +4568,10 @@
     bluffDerive: () => (live('bluff') ? bluffDerive(live('bluff')) : null),
     bluffTooClose: (t, id) => bluffTooClose(t, bluffQ(id)),
     _bluffWrite: (pid, t) => bluffWrite(pid, t), _bluffVote: (pid, k) => bluffVote(pid, k), _bluffNext: () => bluffNext(),
+    // Rollen und Quizmaster
+    get me() { return local.me || null; }, get device() { return local.dev; },
+    devices: () => devices(), qmPresent: () => qmPresent(), hasDevice: (pid) => hasDevice(pid),
+    _holReveal: () => holReveal(), _bluffStep: () => bluffRevealStep(), quizFirstPlan: () => quizFirstPlan(),
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -31,6 +31,14 @@ window.GAMENIGHT_CONFIG = {
   },
 
   /* ------------------------------------------------------------------------
+     QUIZMASTER
+     Spielt nicht mit und steht nicht in der Tabelle. Leitet den Quizblock:
+     liest vor, sieht bei Higher or Lower und Bluff die Lösung und deckt auf.
+     Name, Symbol und Foto lassen sich in der App ändern (Mehr → Quizmaster).
+     ------------------------------------------------------------------------ */
+  quizmaster: { name: 'Quizmaster', emoji: '🎤' },
+
+  /* ------------------------------------------------------------------------
      SPIELER
      Namen, Emoji und Farbe lassen sich in der App ändern (Mehr → Spieler).
      ------------------------------------------------------------------------ */
@@ -69,7 +77,7 @@ window.GAMENIGHT_CONFIG = {
     { id: 'hol',         name: 'Higher or Lower',     emoji: '📈', unit: 'Spiel',      scoring: 'placement', points: [3, 1, 0], mode: 'hol', hol: { rounds: 5, lives: 2, cards: 12 } },
     { id: 'bluff',       name: 'Bluff',               emoji: '🎭', unit: 'Spiel',      scoring: 'placement', points: [3, 1, 0], mode: 'bluff', bluff: { questions: 6, doubleLast: true, suggest: true } },
 
-    // Quizspiele mit Buzzer: Die Fragen liest jemand vor, der nicht mitspielt
+    // Quizspiele mit Buzzer: Die Fragen liest der Quizmaster vor
     { id: 'schaetzen',   name: 'Schätzfragen',        emoji: '🤔', unit: 'Runde',      scoring: 'free', maxPoints: 10, buzzer: true },
     { id: 'filme',       name: 'Filme erraten',       emoji: '🎬', unit: 'Runde',      scoring: 'free', maxPoints: 10, buzzer: true },
   ],
@@ -78,16 +86,20 @@ window.GAMENIGHT_CONFIG = {
      SPIELPLAN
      Reihenfolge des Abends. `game` verweist auf die id eines Spiels.
      multiplier: 2  → dieses Spiel zählt doppelt (Finale)
+     Die Spiele mit Quizmaster stehen vorne. Danach kann der Quizmaster gehen.
      ------------------------------------------------------------------------ */
   plan: [
+    // Quizblock mit Quizmaster
+    { game: 'schaetzen' },
+    { game: 'filme' },
+    { game: 'hol' },
+    { game: 'bluff' },
+    // Konsolenspiele
     { game: 'mk8' },
     { game: 'bomberman' },
     { game: 'boomerangfu' },
-    { game: 'hol' },
     { game: 'mkw' },
-    { game: 'bluff' },
     { game: 'bomberman' },
-    { game: 'schaetzen' },
     { game: 'boomerangfu' },
     { game: 'mk8' },
     { game: 'mkw', multiplier: 2 },
@@ -118,6 +130,17 @@ window.GAMENIGHT_CONFIG = {
         { id: 'flamingo',     emoji: '🦩', title: 'Flamingo',        text: 'Spiel das ganze Rennen im Stehen auf einem Bein.' },
         { id: 'blindstart',   emoji: '🙈', title: 'Blindstart',      text: 'Augen zu bis nach der ersten Kurve. Ein Gegner sagt dir, wann du sie öffnen darfst.' },
         { id: 'glueck',       emoji: '🍀', title: 'Glück gehabt',    text: 'Kein Handicap in diesem Rennen. Genieß es!' },
+        // neu in Version 1.4
+        { id: 'trickverbot',    emoji: '🤸', title: 'Trickverbot',     text: 'Keine Sprung-Tricks, also auch kein Boost danach. Gilt auch für Rails und Wände.' },
+        { id: 'abkuerzung',     emoji: '🛣️', title: 'Ohne Abkürzung',  text: 'Du bleibst auf der Strecke, auch mit Pilz oder Stern.' },
+        { id: 'muenzfasten',    emoji: '🪙', title: 'Münzfasten',      text: 'Weich allen Münzen aus. Erwischt dich ein Gegner beim Einsammeln, gehen die Hände 1 Sekunde vom Controller.' },
+        { id: 'nachhinten',     emoji: '🔙', title: 'Nur nach hinten', text: 'Alles, was man werfen kann, fliegt nur nach hinten. Pilze und Sterne sind normal erlaubt.' },
+        { id: 'kopfstand',      emoji: '🙃', title: 'Kopfstand',       text: 'Halte den Controller das ganze Rennen um 180 Grad gedreht.' },
+        { id: 'zeigefinger',    emoji: '☝️', title: 'Zeigefinger',     text: 'Keine Daumen: Stick und Knöpfe bedienst du nur mit den Zeigefingern.' },
+        { id: 'pirat',          emoji: '🏴‍☠️', title: 'Pirat',           text: 'Ein Auge bleibt das ganze Rennen zu.' },
+        { id: 'hinterbaenkler', emoji: '🛋️', title: 'Hinterbänkler',   text: 'Setz dich so weit vom Fernseher weg, wie der Raum es hergibt.' },
+        { id: 'boxenstopp',     emoji: '⛽', title: 'Boxenstopp',      text: 'Halte zweimal im Rennen komplett an und zähl laut bis drei.' },
+        { id: 'ferngesteuert',  emoji: '🎮', title: 'Ferngesteuert',   text: 'Items nur auf Kommando: Der Gegner links von dir ruft „Jetzt!“, dann musst du sofort. Vorher darfst du nicht.' },
       ],
     },
   ],

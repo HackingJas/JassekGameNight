@@ -81,6 +81,23 @@ button { cursor: pointer; touch-action: manipulation; -webkit-user-select: none;
 .sync-pill.offline .dot, .sync-pill.connecting .dot { background: var(--warn); }
 .sync-pill.error .dot { background: var(--bad); }
 
+/* Rolle dieses Handys (oben rechts und in den Spielen) */
+.top-right { flex: none; display: flex; align-items: center; gap: 8px; }
+.role-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 132px;
+  padding: 3px 11px 3px 3px; border-radius: 999px; border: 1px solid var(--rail);
+  background: var(--deck); font-size: 13px; font-weight: 800; color: var(--ink);
+}
+.role-chip span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.role-chip .avatar.xs { flex: none; }
+.role-chip.unset { padding: 7px 12px; border-color: var(--gold); color: var(--gold); background: rgba(255, 201, 60, .12); animation: pulse 1.6s ease-in-out infinite; }
+.role-chip.in-game { flex: none; margin-top: 2px; }
+.role-chip.icon { padding: 2px; }
+.top-right.with-role .sync-pill.live { padding: 9px; }
+.top-right.with-role .sync-pill.live .lbl { display: none; }
+.me-tag { position: absolute; top: -9px; right: 8px; padding: 1px 7px; border-radius: 999px; background: var(--pc); color: #12102c; font-size: 10.5px; font-weight: 900; letter-spacing: .5px; text-transform: uppercase; }
+@media (max-width: 380px) { .role-chip { max-width: 96px; } }
+
 main.view {
   padding: 18px var(--gutter) calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px);
   max-width: 640px; margin: 0 auto;
@@ -799,6 +816,56 @@ body.has-game { overflow: hidden; }
 .who-btn { --pc: var(--dim); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px; border-radius: 18px; border: 2px solid var(--rail); background: var(--deck-2); font-weight: 800; min-width: 0; }
 .who-btn[aria-pressed="true"] { border-color: var(--pc); background: color-mix(in srgb, var(--pc) 18%, var(--deck-2)); }
 .banner.live { width: 100%; color: var(--ink); text-align: left; cursor: pointer; }
+.role-banner { border-color: var(--gold); }
+.who-btn { position: relative; }
+.who-btn.taken { opacity: .6; }
+.who-tag { font-size: 11px; font-weight: 800; color: var(--faint); }
+.who-tag.me { color: var(--good); }
+.who-row .avatar { flex: none; }
+.who-cta { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; text-align: center; border-radius: var(--r-lg); border: 2px solid var(--gold); background: rgba(255, 201, 60, .1); }
+.who-cta p { margin: 0; font-size: 15px; color: var(--dim); }
+.who-cta p b { color: var(--ink); }
+.g-help { align-self: center; font-size: 12.5px; padding-top: 0; color: var(--faint); }
+
+/* ---------- Quizmaster ---------- */
+.qm-desk {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: var(--r-lg);
+  background: radial-gradient(120% 90% at 0% 0%, rgba(255, 201, 60, .16), rgba(255, 201, 60, 0) 60%), var(--deck);
+  border: 2px solid rgba(255, 201, 60, .55);
+}
+.qm-head { display: flex; align-items: center; gap: 12px; }
+.qm-head .avatar { flex: none; }
+.qm-hi { font-family: var(--font-display); font-size: 24px; line-height: 1.1; }
+.qm-text { margin: 0; color: var(--dim); font-size: 15px; }
+.qm-block { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.qm-block li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; background: var(--deck-2); border: 1px solid var(--rail); }
+.qm-block li.now { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255, 201, 60, .14); }
+.qm-block li.done { opacity: .6; }
+.qm-block .g-emoji { font-size: 22px; text-align: center; }
+.qm-block .nm { min-width: 0; font-weight: 800; }
+.qm-block .nm small { display: block; font-size: 12px; font-weight: 600; color: var(--dim); }
+.qm-move { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border-radius: 14px; border: 1px dashed rgba(255, 201, 60, .5); }
+
+.hc-v.qm { background: transparent; color: var(--gold); border: 2px dashed var(--gold); }
+.hc-qm { margin-top: 4px; font-size: 12px; font-weight: 800; color: var(--gold); }
+.qm-hint { margin: 0; padding: 9px 12px; border-radius: 12px; background: rgba(255, 201, 60, .1); border: 1px dashed rgba(255, 201, 60, .5); font-size: 14px; color: var(--dim); }
+.qm-hint b { color: var(--ink); }
+.qm-peek { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 16px; border: 1px dashed rgba(255, 201, 60, .55); background: rgba(255, 201, 60, .06); }
+.qm-peek > .eyebrow { color: var(--gold); }
+.qm-line { --pc: var(--dim); display: grid; grid-template-columns: 26px auto minmax(0, 1fr); align-items: center; gap: 8px; font-size: 14px; }
+.qm-line span { min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-weight: 700; }
+.qm-line i { color: var(--faint); font-weight: 600; }
+.bl-opt.qm-opt { flex-direction: column; align-items: flex-start; gap: 6px; font-size: 16px; }
+.qm-opt.truth { border-color: var(--gold); }
+.qm-o-t small { color: var(--gold); }
+.qm-o-m { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; }
+.qm-o-l { color: var(--faint); }
+.qm-go { min-height: 60px; font-size: 19px; }
+.bl-qm-truth { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding: 9px 12px; border-radius: 12px; border: 1px dashed var(--gold); background: rgba(255, 201, 60, .08); }
+.bl-qm-truth span { font-size: 12px; font-weight: 800; color: var(--gold); }
+.bl-qm-truth b { font-size: 18px; }
+.tv-qm { display: flex; align-items: center; gap: 10px; padding: 6px 16px 6px 6px; border-radius: 999px; border: 1px solid rgba(255, 201, 60, .55); background: rgba(255, 201, 60, .1); font-weight: 800; font-size: clamp(14px, 1.2vw, 22px); }
+.tv-qm small { display: block; font-size: .7em; letter-spacing: .6px; text-transform: uppercase; color: var(--gold); }
 
 /* Spiel-Ansicht im TV-Modus */
 .game.tv .game-inner { max-width: none; gap: clamp(14px, 1.6vw, 30px); padding: clamp(14px, 2vw, 40px) clamp(16px, 3vw, 56px); }

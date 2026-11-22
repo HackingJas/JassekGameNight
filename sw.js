@@ -5,7 +5,7 @@
    WICHTIG: Wenn du eine Datei änderst (z. B. config.js), zähl hier die
    VERSION hoch. Dann zeigt die installierte App „Neue Version verfügbar“.
    ========================================================================== */
-const VERSION = 'gamenight-v1.3.0';
+const VERSION = 'gamenight-v1.4.0';
 const RUNTIME = 'gamenight-runtime';
 const ASSETS = [
   './',
@@ -19,6 +19,9 @@ const ASSETS = [
   './app.js',
   './sync.js',
   './manifest.webmanifest',
+];
+// Die Symbole sind nett, aber kein Muss: Fehlt eins, startet die App trotzdem offline.
+const OPTIONAL = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
@@ -26,7 +29,8 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(VERSION).then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
+    caches.open(VERSION).then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' })))
+      .then(() => Promise.all(OPTIONAL.map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => null)))))
   );
 });
 
