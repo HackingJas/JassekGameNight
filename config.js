@@ -24,10 +24,14 @@ window.GAMENIGHT_CONFIG = {
                      (im Finale ×2 also sogar vierfach).
      comebackStreak  Wer so oft hintereinander Letzter wird, bekommt einmal
                      pro Abend einen Extra-Joker („Aufhol-Joker“). 0 = aus.
+     tipJokers       Tipp-Joker pro Spieler und Abend. Vor einem Spiel geheim
+                     auf den Sieger tippen (auch auf sich selbst). Richtig
+                     getippt = 1 Extrapunkt. 0 = aus.
      ------------------------------------------------------------------------ */
   rules: {
     jokersPerNight: 1,
     comebackStreak: 3,
+    tipJokers: 1,
   },
 
   /* ------------------------------------------------------------------------

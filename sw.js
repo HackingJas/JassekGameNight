@@ -5,7 +5,7 @@
    WICHTIG: Wenn du eine Datei änderst (z. B. config.js), zähl hier die
    VERSION hoch. Dann zeigt die installierte App „Neue Version verfügbar“.
    ========================================================================== */
-const VERSION = 'gamenight-v1.4.0';
+const VERSION = 'gamenight-v1.5.0';
 const RUNTIME = 'gamenight-runtime';
 const ASSETS = [
   './',

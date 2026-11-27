@@ -17,7 +17,7 @@
 
   const CFG = window.GAMENIGHT_CONFIG || {};
   const PREVIEW = !!window.GN_PREVIEW;
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.5.0';
   const SCHEMA = 4;
   const ROLE_FRESH = 12 * 3600 * 1000; // so lange gilt ein Handy als „im Raum“
   const QM_FRESH = 60 * 60 * 1000;     // so lange nach seiner letzten Aktion gilt der Quizmaster als anwesend
@@ -30,7 +30,7 @@
   const SWATCHES = ['#ff5d73', '#3ddc97', '#4cc9f0', '#c77dff', '#ff9f1c', '#f15bb5', '#a3e635', '#ffd166'];
   const EMOJIS = ['🦊', '🐸', '🐼', '🐯', '🦄', '🐙', '🐵', '🦖', '🐧', '🐨', '🦁', '🐲', '👾', '🤖', '👻', '🎃', '🍄', '⭐', '🔥', '⚡', '🍕', '🌮', '🚀', '👑'];
   const WHEEL_COLORS = ['#ff5d73', '#ffc93c', '#3ddc97', '#4cc9f0', '#c77dff', '#ff9f1c'];
-  const RULES = Object.assign({ jokersPerNight: 1, comebackStreak: 3 }, CFG.rules || {});
+  const RULES = Object.assign({ jokersPerNight: 1, comebackStreak: 3, tipJokers: 1 }, CFG.rules || {});
 
   /* ======================================================================
      1. HILFSFUNKTIONEN
@@ -314,7 +314,7 @@
 
   // Tabelle: Punkte, dann Siege, dann 2. Plätze.
   function standings(results = state.results) {
-    const rows = state.players.map((p, i) => ({ id: p.id, p, order: i, points: 0, wins: 0, seconds: 0, played: 0, placeSum: 0, hcWins: 0, jokerBonus: 0 }));
+    const rows = state.players.map((p, i) => ({ id: p.id, p, order: i, points: 0, wins: 0, seconds: 0, played: 0, placeSum: 0, hcWins: 0, jokerBonus: 0, tipBonus: 0 }));
     const by = Object.fromEntries(rows.map((r) => [r.id, r]));
     for (const r of results) {
       for (const e of r.entries) {
@@ -323,7 +323,8 @@
         row.points += Number(e.points) || 0;
         row.played++;
         row.placeSum += e.place;
-        if (e.joker) row.jokerBonus = round2(row.jokerBonus + (Number(e.points) || 0) / 2);
+        if (e.joker) row.jokerBonus = round2(row.jokerBonus + ((Number(e.points) || 0) - (Number(e.tip) || 0)) / 2);
+        if (e.tip) row.tipBonus = round2(row.tipBonus + Number(e.tip));
         if (e.place === 1) {
           row.wins++;
           if ((r.handicaps || []).some((h) => h.playerId === e.playerId)) row.hcWins++;
@@ -802,6 +803,7 @@
     checkComebacks();
     gameSync();
     renderGame();
+    timerTick();
     maybeAskRole();
   }
 
@@ -930,8 +932,20 @@
       <div class="eyebrow">Als Nächstes · Spiel ${cur.index + 1}</div>
       <div class="next-title"><span class="g-emoji" aria-hidden="true">${esc(g.emoji)}</span><div style="min-width:0"><div class="t">${esc(g.name)}</div><div class="s">${esc(cur.label)}${cur.multiplier > 1 ? ' &nbsp;<span class="badge">Finale ×2</span>' : ''}</div></div></div>
       <div class="next-actions">${nextActions(cur, g, hasWheel)}</div>
+      ${modLinks(g)}
       ${jokerChips(cur)}
+      ${tipRow(cur)}
     </section>`;
+  }
+
+  // Ansagen zum Vorlesen: Eröffnung vor dem ersten Spiel, Regeln für jedes Quizspiel
+  function modLinks(g) {
+    if (local.tv) return '';
+    const kind = gameKind(g);
+    const links = [];
+    if (!state.results.length && leadsHere()) links.push('<button class="link-btn mod-link" type="button" data-act="mod" data-k="open">📣 Eröffnung vorlesen</button>');
+    if (kind) links.push(`<button class="link-btn mod-link" type="button" data-act="mod" data-k="${kind}" data-gid="${esc(g.id)}">📣 ${isHost() ? 'Ansage zum Vorlesen' : 'Regeln'}</button>`);
+    return links.length ? `<div class="mod-links">${links.join('')}</div>` : '';
   }
 
   function breakdownHtml() {
@@ -957,7 +971,8 @@
     const open = quiz.filter((s) => !s.result);
     if (quiz.length && !open.length) {
       return `<section class="qm-desk" aria-label="Quizmaster-Pult"><div class="qm-head">${avatar(q, '', { crown: false })}<div><div class="eyebrow">Quizmaster-Pult</div><div class="qm-hi">Quizblock geschafft!</div></div></div>
-        <p class="qm-text">Danke fürs Moderieren, ${esc(q.name)}. Ab jetzt leiten die Spieler selbst.</p>
+        <p class="qm-text">Danke fürs Moderieren, ${esc(q.name)}. Lies zum Schluss den Zwischenstand vor, dann leiten die Spieler selbst.</p>
+        <button class="btn primary" type="button" data-act="mod" data-k="close">📣 Abschluss vorlesen</button>
         <button class="btn ghost" type="button" data-act="qmLeave">Als Quizmaster abmelden</button></section>`;
     }
     const list = quiz.length
@@ -969,7 +984,7 @@
       : '<p class="note">Im Spielplan steht noch kein Quizspiel. Unter Spielplan → Bearbeiten kannst du welche anhängen.</p>';
     return `<section class="qm-desk" aria-label="Quizmaster-Pult"><div class="qm-head">${avatar(q, '', { crown: false })}<div><div class="eyebrow">Quizmaster-Pult</div><div class="qm-hi">Hallo ${esc(q.name)}!</div></div></div>
       <div class="eyebrow">Dein Quizblock</div>${list}
-      <p class="note">Bei Higher or Lower und Bluff siehst nur du die Lösung und deckst selbst auf. Beim Buzzer gibst du frei und wertest.</p></section>`;
+      <p class="note">Bei Higher or Lower und Bluff siehst nur du die Lösung und deckst selbst auf. Beim Buzzer gibst du frei und wertest. Oben im Spiel findest du 📣 Ansage und ⏱ Countdown, unten im Wettbüro die Tipps.</p></section>`;
   }
 
   /* ---------- Spielplan ---------- */
@@ -990,7 +1005,7 @@
   function resultMini(r) {
     return [...r.entries].sort((a, b) => a.place - b.place || b.points - a.points).map((e) => {
       const p = playerById(e.playerId);
-      return p ? `<span class="chip-pts" title="${esc(p.name)}: ${fmtPts(e.points)}">${face(p)}${fmtPts(e.points)}${e.joker ? '🃏' : ''}</span>` : '';
+      return p ? `<span class="chip-pts" title="${esc(p.name)}: ${fmtPts(e.points)}">${face(p)}${fmtPts(e.points)}${e.joker ? '🃏' : ''}${e.tip ? '🎯' : ''}</span>` : '';
     }).join('');
   }
   function slotRow(s, cur) {
@@ -1199,9 +1214,140 @@
     return `<div class="joker-row"><div class="eyebrow">Joker</div><div class="jk-chips">${chips}</div></div>`;
   }
 
+  /* ---------- Tipp-Joker ----------
+     Jeder Spieler darf einmal pro Abend vor einem Spiel geheim tippen, wer gewinnt (auch sich selbst).
+     Richtig getippt = +1 Punkt. Offene Tipps stehen in live/tip_<Spieler> – ein eigener Knoten pro
+     Spieler, damit sich gleichzeitige Tipps nicht überschreiben. live/tipLock_<Platz> schließt die
+     Tipps. Beim Eintragen wandern die Tipps ins Ergebnis und werden aufgedeckt. */
+  const TIP_BONUS = 1;
+  const tipsPerNight = () => Math.max(0, Math.round(Number(RULES.tipJokers)) || 0);
+  const tipOf = (pid) => { const t = live('tip_' + pid); return t && t.s && t.on ? t : null; };
+  const tipsLocked = (slotId) => !!live('tipLock_' + slotId);
+  function openTips(slotId) {
+    const out = {};
+    state.players.forEach((p) => { const t = tipOf(p.id); if (t && t.s === slotId && playerById(t.on)) out[p.id] = t.on; });
+    return out;
+  }
+  function tipStatus(pid, { slotId = null } = {}) {
+    const budget = tipsPerNight();
+    let used = 0;
+    const done = new Set();
+    for (const r of state.results) {
+      if (r.slotId) done.add(r.slotId);
+      if ((r.tips || []).some((t) => t.by === pid)) used++;
+    }
+    const t = tipOf(pid);
+    if (t && t.s !== slotId && !done.has(t.s) && state.plan.some((s) => s.id === t.s)) used++;
+    return { budget, used, left: Math.max(0, budget - used) };
+  }
+  function applyTips(entries, tips) {
+    if (!tips || !tips.length) return { entries, tips: [] };
+    const winners = entries.filter((e) => e.place === 1).map((e) => e.playerId);
+    const out = tips.map((t) => ({ by: t.by, on: t.on, ok: winners.includes(t.on) }));
+    const plus = {};
+    out.forEach((t) => { if (t.ok) plus[t.by] = (plus[t.by] || 0) + TIP_BONUS; });
+    return { tips: out, entries: entries.map((e) => (plus[e.playerId] ? Object.assign({}, e, { points: round2(e.points + plus[e.playerId]), tip: plus[e.playerId] }) : e)) };
+  }
+  // Schließt die Tipps für einen Platz im Spielplan (innerhalb von commit aufrufen)
+  function lockTips(st, slotId) {
+    if (slotId && st.plan.some((s) => s.id === slotId) && !st.live['tipLock_' + slotId]) st.live['tipLock_' + slotId] = { at: Date.now() };
+  }
+  function setTip(slotId, pid, onPid) {
+    const p = playerById(pid);
+    if (!p || !state.plan.some((s) => s.id === slotId)) return;
+    if (tipsLocked(slotId)) { toast('Die Tipps für dieses Spiel sind schon geschlossen.'); return; }
+    if (!onPid) {
+      commit((st) => { delete st.live['tip_' + pid]; });
+      toast(`Tipp-Joker von ${p.name} zurückgenommen`);
+      return;
+    }
+    if (!openTips(slotId)[pid] && tipStatus(pid, { slotId }).left <= 0) { toast(`${p.name} hat den Tipp-Joker schon benutzt.`); return; }
+    commit((st) => { st.live['tip_' + pid] = { s: slotId, on: onPid, at: Date.now() }; });
+    initAudio();
+    jokerSound();
+    toast(`🎯 ${p.name} hat getippt. Aufgedeckt wird nach dem Spiel.`);
+  }
+  async function closeTips(slotId) {
+    if (tipsLocked(slotId)) return;
+    const tips = openTips(slotId);
+    const free = state.players.filter((p) => !tips[p.id] && tipStatus(p.id, { slotId }).left > 0);
+    if (free.length && Object.keys(tips).length < state.players.length) {
+      const ok = await confirmSheet({ title: 'Tipps schließen?', text: `${free.map((p) => p.name).join(' und ')} ${free.length > 1 ? 'haben' : 'hat'} den Tipp-Joker noch frei. Nach dem Schließen kann für dieses Spiel niemand mehr tippen.`, ok: 'Schließen' });
+      if (!ok) return;
+    }
+    commit((st) => lockTips(st, slotId));
+    toast('Tipps geschlossen – viel Glück!');
+  }
+  // Darf dieses Gerät für diesen Spieler tippen?
+  function mayTipFor(pid) {
+    if (local.tv) return false;
+    if (!Sync.active()) return true;
+    return pid === myId() || isHost() || (!hasDevice(pid) && !isWatch() && roleValid());
+  }
+  function tipRow(slot) {
+    if (!tipsPerNight()) return '';
+    const tips = openTips(slot.id);
+    const locked = tipsLocked(slot.id);
+    const syncing = Sync.active();
+    const me = myId();
+    const desk = syncing && isHost();
+    const n = Object.keys(tips).length;
+    const chips = state.players.map((p) => {
+      const on = tips[p.id];
+      const ts = tipStatus(p.id, { slotId: slot.id });
+      const target = on ? playerById(on) : null;
+      let sub;
+      if (on) sub = desk || (syncing && p.id === me) ? `auf ${target ? target.name : '?'}` : 'getippt ✓';
+      else if (locked) sub = 'kein Tipp';
+      else sub = ts.left ? 'Tipp frei' : 'verbraucht';
+      const can = !locked && (on || ts.left > 0) && mayTipFor(p.id);
+      return `<button class="jk tip${on ? ' on' : ''}" type="button" data-act="tip" data-slot="${esc(slot.id)}" data-pid="${esc(p.id)}" aria-pressed="${!!on}"${can ? '' : ' disabled'}>${avatar(p, 'xs', { crown: false })}<span class="jk-t"><b>${esc(p.name)}</b><small>${esc(sub)}</small></span></button>`;
+    }).join('');
+    const head = locked ? `Tipp-Joker · geschlossen${n ? ` · ${n} ${plural(n, 'Tipp', 'Tipps')} im Topf` : ''}` : `${desk ? 'Wettbüro · ' : ''}Tipp-Joker: Wer gewinnt? Richtig = +${TIP_BONUS}`;
+    const close = !locked && !local.tv && (desk || n) ? `<button class="${desk ? 'btn small ghost' : 'link-btn'} tip-close" type="button" data-act="tipClose" data-slot="${esc(slot.id)}">Tipps schließen</button>` : '';
+    return `<div class="joker-row tip-row"><div class="eyebrow">${head}</div><div class="jk-chips">${chips}</div>${close}</div>`;
+  }
+  function openTipSheet(slotId, pid) {
+    const p = playerById(pid);
+    const slot = slotList().find((s) => s.id === slotId);
+    if (!p || !slot || tipsLocked(slotId)) return;
+    const cur = openTips(slotId)[pid] || null;
+    const forOther = !Sync.active() || pid !== myId();
+    openSheet({
+      title: forOther ? `Tipp-Joker für ${p.name}` : 'Dein Tipp-Joker',
+      body: () => `<p class="sheet-text">Wer gewinnt <b>${esc(slot.game ? slot.game.name : 'dieses Spiel')}</b>? Liegt ${forOther ? esc(p.name) : 'du'} richtig, gibt es <b>+${TIP_BONUS} Punkt</b>. Den Tipp-Joker gibt es nur einmal pro Abend.</p>
+        <div class="who-grid">${state.players.map((q) => `<button class="who-btn" type="button" data-s="pick" data-v="${esc(q.id)}" aria-pressed="${cur === q.id}" style="--pc:${esc(q.color)}">${avatar(q, '', { crown: false })}<span>${esc(q.name)}${q.id === pid ? ' <small>(selbst)</small>' : ''}</span></button>`).join('')}</div>
+        ${cur ? '<button class="link-btn danger" type="button" data-s="remove">Tipp zurücknehmen</button>' : ''}
+        <p class="note">Die anderen sehen erst nach dem Spiel, worauf getippt wurde. Ein geteilter Sieg zählt auch. Tippen geht, bis das Spiel startet.</p>`,
+      on: (a, el, ev, api) => {
+        if (a === 'pick') { api.close(); setTip(slotId, pid, el.dataset.v); }
+        if (a === 'remove') { api.close(); setTip(slotId, pid, null); }
+      },
+    });
+  }
+  // Großes Aufdecken nach dem Eintragen (auf allen Geräten)
+  function showTipReveal(r) {
+    const tips = (r.tips || []).filter((t) => playerById(t.by));
+    if (!tips.length) return;
+    document.querySelectorAll('.reveal.tipr').forEach((x) => x.remove());
+    const lines = tips.map((t) => {
+      const p = playerById(t.by);
+      const q = playerById(t.on);
+      return `<div class="tip-line ${t.ok ? 'ok' : 'bad'}">${avatar(p, 'xs', { crown: false })}<span class="tip-who"><b>${esc(p.name)}</b> tippte auf <b>${esc(q ? q.name : '?')}</b></span><span class="tip-res">${t.ok ? '+' + TIP_BONUS : '✗'}</span></div>`;
+    }).join('');
+    const el = document.createElement('div');
+    el.className = 'reveal tipr keep' + (local.tv ? ' tv-reveal' : '');
+    el.innerHTML = `<div class="backdrop" data-x></div><div class="reveal-card tip-card" role="dialog" aria-modal="true" aria-label="Tipp-Joker aufgedeckt"><div class="big" aria-hidden="true">🎯</div><div class="title">Tipp-Joker</div><div class="text">${esc(r.gameName)}</div><div class="tip-lines">${lines}</div><button class="btn primary" type="button" data-x>Weiter</button></div>`;
+    el.addEventListener('click', (e) => { if (e.target.closest('[data-x]')) el.remove(); });
+    document.body.appendChild(el);
+    if (local.tv) setTimeout(() => el.remove(), 9000);
+    initAudio();
+    revealSound();
+  }
+
   /* ---------- Ansagen (Aufhol-Joker, Joker von anderen Handys) ---------- */
   function showCard({ p, lead, emoji, title, text, button = 'Alles klar', auto = 0 }) {
-    document.querySelectorAll('.reveal').forEach((r) => r.remove());
+    document.querySelectorAll('.reveal:not(.keep)').forEach((r) => r.remove());
     const el = document.createElement('div');
     el.className = 'reveal' + (local.tv ? ' tv-reveal' : '');
     el.innerHTML = `<div class="backdrop" data-x></div><div class="reveal-card" role="dialog" aria-modal="true" aria-label="${esc(title)}" style="--pc:${esc(p ? p.color : '#ffc93c')}">${p ? `<div class="who-line">${avatar(p, 'xs', { crown: false })}${esc(lead || p.name)}</div>` : ''}<div class="big" aria-hidden="true">${esc(emoji)}</div><div class="title">${esc(title)}</div><div class="text">${esc(text)}</div><button class="btn primary" type="button" data-x>${esc(button)}</button></div>`;
@@ -1259,6 +1405,9 @@
         if (winners.length) tvBanner('🏁', `${r.gameName}: ${winners.map((w) => w.name).join(' & ')} ${winners.length > 1 ? 'gewinnen' : 'gewinnt'}`, winners[0]);
       });
     }
+    // Tipp-Joker eines gerade eingetragenen Spiels auf allen Geräten aufdecken
+    const tipped = newResults.filter((r) => (r.tips || []).length && Date.now() - (r.ts || 0) < 120000);
+    if (tipped.length && !ui.booting) setTimeout(() => showTipReveal(tipped[tipped.length - 1]), local.tv ? 1800 : 300);
   }
 
   /* ---------- Abzeichen ---------- */
@@ -1278,7 +1427,7 @@
     if (!state.results.length || ps.length < 2) return [];
     const sorted = [...state.results].sort((a, b) => a.ts - b.ts);
     const v = {};
-    ps.forEach((p) => { v[p.id] = { streak: 0, bestStreak: 0, seconds: 0, lasts: 0, hcWins: 0, lucky: 0, jokerBonus: 0, games: new Set(), finale: false, closed: 0 }; });
+    ps.forEach((p) => { v[p.id] = { streak: 0, bestStreak: 0, seconds: 0, lasts: 0, hcWins: 0, lucky: 0, jokerBonus: 0, tipOk: 0, games: new Set(), finale: false, closed: 0 }; });
     const allGames = new Set();
     for (const r of sorted) {
       allGames.add(r.gameId);
@@ -1294,8 +1443,10 @@
         const hc = (r.handicaps || []).filter((h) => h.playerId === e.playerId);
         if (e.place === 1 && !allTied && hc.length) s.hcWins++;
         s.lucky += hc.filter((h) => h.itemId === 'glueck' || h.title === 'Glück gehabt').length;
-        if (e.joker) s.jokerBonus = Math.max(s.jokerBonus, round2((Number(e.points) || 0) / 2));
-        if ((Number(e.points) || 0) > 0) s.games.add(r.gameId);
+        const own = (Number(e.points) || 0) - (Number(e.tip) || 0);
+        if (e.joker) s.jokerBonus = Math.max(s.jokerBonus, round2(own / 2));
+        if (e.tip) s.tipOk++;
+        if (own > 0) s.games.add(r.gameId);
         if (r.multiplier > 1 && e.place === 1 && !allTied) s.finale = true;
       }
     }
@@ -1320,6 +1471,7 @@
     add('finale', '⭐', 'Finalheld', ps.filter((p) => v[p.id].finale).map((p) => p.id), 'hat das Finale gewonnen');
     ids = best('jokerBonus', 2);
     if (ids.length) add('joker', '🃏', 'Joker-Profi', ids, `+${fmtPts(v[ids[0]].jokerBonus)} Punkte durch einen Joker`);
+    add('orakel', '🔮', 'Orakel', ps.filter((p) => v[p.id].tipOk > 0).map((p) => p.id), 'den Sieger mit dem Tipp-Joker richtig vorhergesagt');
     ids = best('hcWins', 1);
     if (ids.length) add('handicap', '💪', 'Handicap-Held', ids, `${v[ids[0]].hcWins}× gewonnen trotz Handicap`);
     ids = best('seconds', 3);
@@ -1446,8 +1598,10 @@
     if (cur) {
       const g = cur.game || { emoji: '❓', name: 'Gelöschtes Spiel' };
       const calls = (state.jokerCalls[cur.id] || []).map(playerById).filter(Boolean);
+      const tipN = Object.keys(openTips(cur.id)).length;
+      if (tipN) calls.push(null);
       const hc = state.players.filter((p) => state.wheel.current[p.id]);
-      next = `<section class="tv-card tv-next"><div class="eyebrow">Als Nächstes · Spiel ${cur.index + 1} von ${slots.length}</div><div class="next-title"><span class="g-emoji" aria-hidden="true">${esc(g.emoji)}</span><div style="min-width:0"><div class="t">${esc(g.name)}</div><div class="s">${esc(cur.label)}${cur.multiplier > 1 ? ' &nbsp;<span class="badge">Finale ×2</span>' : ''}</div></div></div>${calls.length ? `<div class="tv-calls">${calls.map((p) => `<span class="tv-call">${avatar(p, 'xs', { crown: false })}${esc(p.name)} setzt den Joker</span>`).join('')}</div>` : ''}${hc.length ? `<div class="hc-list">${hc.map((p) => { const a = state.wheel.current[p.id]; return `<div class="hc-row" style="--pc:${esc(p.color)}">${avatar(p, 'sm', { crown: false })}<div><div class="hc-t">${esc(p.name)}: ${esc(a.emoji)} ${esc(a.title)}</div><div class="hc-x">${esc(a.text)}</div></div></div>`; }).join('')}</div>` : ''}</section>`;
+      next = `<section class="tv-card tv-next"><div class="eyebrow">Als Nächstes · Spiel ${cur.index + 1} von ${slots.length}</div><div class="next-title"><span class="g-emoji" aria-hidden="true">${esc(g.emoji)}</span><div style="min-width:0"><div class="t">${esc(g.name)}</div><div class="s">${esc(cur.label)}${cur.multiplier > 1 ? ' &nbsp;<span class="badge">Finale ×2</span>' : ''}</div></div></div>${calls.length ? `<div class="tv-calls">${calls.map((p) => (p ? `<span class="tv-call">${avatar(p, 'xs', { crown: false })}${esc(p.name)} setzt den Joker</span>` : `<span class="tv-call tip">🎯 ${tipN} ${plural(tipN, 'Tipp', 'Tipps')} im Topf</span>`)).join('')}</div>` : ''}${hc.length ? `<div class="hc-list">${hc.map((p) => { const a = state.wheel.current[p.id]; return `<div class="hc-row" style="--pc:${esc(p.color)}">${avatar(p, 'sm', { crown: false })}<div><div class="hc-t">${esc(p.name)}: ${esc(a.emoji)} ${esc(a.title)}</div><div class="hc-x">${esc(a.text)}</div></div></div>`; }).join('')}</div>` : ''}</section>`;
     } else if (slots.length) {
       next = '<section class="tv-card tv-next"><div class="eyebrow">Ende der GameNight</div><div class="next-title"><span class="g-emoji" aria-hidden="true">🏆</span><div class="t">Siegerehrung</div></div></section>';
     }
@@ -1732,9 +1886,12 @@
     const cats = holPickCategories(s.rounds);
     const rounds = cats.map((c) => holDeck(c, s.cards));
     const id = 'h' + uid();
+    const qm = qmPresent();
     commit((st) => {
       Object.keys(st.live).forEach((k) => { if (k.indexOf('holA_') === 0) delete st.live[k]; });
-      st.live.hol = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', rounds, r: 0, c: 0, lives: s.lives, players: st.players.map((p) => p.id), startedAt: Date.now(), qm: qmPresent() };
+      clearTie(st);
+      st.live.hol = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', rounds, r: 0, c: 0, lives: s.lives, players: st.players.map((p) => p.id), startedAt: Date.now(), qm, bonus: qm ? null : randomBonus(rounds.length, false) };
+      lockTips(st, slot && slot.id);
       st.session.holUsed = (st.session.holUsed || []).concat(cats);
       cats.forEach((c) => { st.holPlays[c] = (st.holPlays[c] || 0) + 1; });
     }, { render: false });
@@ -1826,7 +1983,7 @@
         }
         if (ended) break;
       }
-      if (ended) winners.forEach((pid) => { stats[pid].wins++; });
+      if (ended) winners.forEach((pid) => { stats[pid].wins += hol.bonus === ri ? 2 : 1; });
       rounds.push({ ri, cat, ended, winners });
     }
     return { players, stats, rounds, cur };
@@ -1839,11 +1996,20 @@
     const order = act.slice(off).concat(act.slice(0, off));
     return { order, next: order.find((pid) => !cur.answered.includes(pid)) || null };
   }
-  function holStandings(d) {
+  function holStandings(d, tb) {
     const rows = d.players.map((pid, i) => ({ pid, wins: d.stats[pid].wins, correct: d.stats[pid].correct, i }));
     rows.sort((a, b) => b.wins - a.wins || b.correct - a.correct || a.i - b.i);
     rows.forEach((r, k) => { const p = rows[k - 1]; r.place = p && p.wins === r.wins && p.correct === r.correct ? p.place : k + 1; });
-    return rows;
+    return applyTieBreak(rows, tb);
+  }
+  // Wer das Stechen gewinnt, steht allein auf Platz 1.
+  function applyTieBreak(rows, tb) {
+    const top = rows.filter((r) => r.place === 1);
+    if (!tb || top.length < 2 || !top.some((r) => r.pid === tb)) return rows;
+    const out = [rows.find((r) => r.pid === tb)].concat(rows.filter((r) => r.pid !== tb));
+    out.forEach((r) => { if (r.place === 1 && r.pid !== tb) r.place = 2; });
+    out[0].tb = true;
+    return out;
   }
   function holSubmit(pid, gap) {
     const hol = live('hol');
@@ -1891,18 +2057,25 @@
   async function gameNoQm(k) {
     const ok = await confirmSheet({ title: 'Ohne Quizmaster weiterspielen?', text: `Normalerweise deckt ${qmName()} auf. Wenn ihr weitermacht, deckt die App ab jetzt in diesem Spiel selbst auf.`, ok: 'Selbst aufdecken', cancel: 'Warten' });
     if (!ok) return;
-    commit((st) => { if (st.live[k]) st.live[k].qm = false; }, { render: false });
+    commit((st) => {
+      const g = st.live[k];
+      if (!g) return;
+      g.qm = false;
+      // Ohne Quizmaster lost die App die Bonusrunde bzw. -frage aus, falls noch keine festgelegt ist.
+      if (g.bonus == null && k === 'hol') g.bonus = randomBonus(g.rounds.length, false, g.r);
+      if (g.bonus == null && k === 'bluff') g.bonus = randomBonus(g.qs.length, g.dbl, g.i);
+    }, { render: false });
     render();
   }
   function holClear() {
-    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'hol' || k.indexOf('holA_') === 0) delete st.live[k]; }); }, { render: false });
+    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'hol' || k.indexOf('holA_') === 0) delete st.live[k]; }); clearTie(st, 'hol'); }, { render: false });
     ui.gameOpen = null;
     render();
   }
   function holSaveResult() {
     const hol = live('hol');
     if (!hol) return;
-    const rows = holStandings(holDerive(hol));
+    const rows = holStandings(holDerive(hol), hol.tb);
     const order = rows.map((r) => r.pid);
     const ties = rows.slice(1).map((r, k) => r.place === rows[k].place);
     state.players.forEach((p) => { if (!order.includes(p.id)) { order.push(p.id); ties.push(false); } });
@@ -2027,25 +2200,31 @@
       const hint = qmView ? `<p class="qm-hint">🔒 Gehört ${esc(describeGap(cur.timelineBefore, holGapOf(cur.timelineBefore, card.value)))}</p>` : '';
       prompt = roleCta() + `<p class="g-prompt wait">${avatar(nextP, 'xs', { crown: false })}<b>${esc(nextP.name)}</b> ist dran …</p>${hint}${holProxyHtml(nextP)}`;
     }
-    return gameHead(`<div class="eyebrow">Higher or Lower · Runde ${cur.ri + 1} von ${total}</div><div class="g-title">${esc(cat.emoji)} ${esc(cat.name)}</div>${cat.note ? `<div class="g-note">${esc(cat.note)}</div>` : ''}`, gameRoleBtn())
-      + `<div class="hol-players">${strip}</div><div class="hol-main">${cardHtml}<div class="hol-side">${prompt}${holLineHtml(cur, canAct)}</div></div>`
+    const isBonus = hol.bonus === cur.ri;
+    const flag = isBonus ? bonusFlag('Bonusrunde: Der Rundensieg zählt doppelt') : '';
+    const bonusBtn = qmView && hol.qm && hol.bonus == null && cur.ci === 0 && !cur.answered.length && !cur.revealed && !cur.ready && hol.rounds.length > 1
+      ? '<button class="btn small ghost bonus-btn" type="button" data-g="hol-bonus">★ Diese Runde zur Bonusrunde machen</button>' : '';
+    return gameHead(`<div class="eyebrow">Higher or Lower · Runde ${cur.ri + 1} von ${total}${isBonus ? ' · ★ Bonus' : ''}</div><div class="g-title">${esc(cat.emoji)} ${esc(cat.name)}</div>${cat.note ? `<div class="g-note">${esc(cat.note)}</div>` : ''}`, gameTools('hol') + gameRoleBtn())
+      + `<div class="hol-players">${strip}</div><div class="hol-main">${cardHtml}<div class="hol-side">${flag}${bonusBtn}${prompt}${holLineHtml(cur, canAct)}</div></div>`
       + (foot ? `<div class="g-foot">${foot}</div>` : '')
       + (local.tv ? '' : '<button class="link-btn g-abort" type="button" data-g="abort">Spiel abbrechen</button>');
   }
   function holFinalHtml(hol, d) {
-    const rows = holStandings(d);
+    const rows = holStandings(d, hol.tb);
     const firsts = rows.filter((r) => r.place === 1);
-    const title = firsts.length === 1 ? `${esc(playerById(firsts[0].pid).name)} gewinnt!` : 'Gleichstand an der Spitze!';
+    const title = firsts.length === 1 ? `${esc(playerById(firsts[0].pid).name)} gewinnt${firsts[0].tb ? ' das Stechen' : ''}!` : 'Gleichstand an der Spitze!';
     const list = rows.map((r) => {
       const p = playerById(r.pid);
-      return `<div class="fin-row" style="--pc:${esc(p.color)}"><span class="pl">${r.place}.</span>${avatar(p, 'sm', { crown: false })}<b>${esc(p.name)}</b><span class="muted">${r.wins} ${plural(r.wins, 'Runde', 'Runden')} · ${r.correct} richtig</span></div>`;
+      return `<div class="fin-row" style="--pc:${esc(p.color)}"><span class="pl">${r.place}.</span>${avatar(p, 'sm', { crown: false })}<b>${esc(p.name)}</b><span class="muted">${r.wins} ${plural(r.wins, 'Rundensieg', 'Rundensiege')} · ${r.correct} richtig${r.tb ? ' · ⚔️ Stechen' : ''}</span></div>`;
     }).join('');
-    const rounds = d.rounds.map((r) => `<div class="fin-round"><span>${r.cat ? esc(r.cat.emoji + ' ' + r.cat.name) : 'Runde ' + (r.ri + 1)}</span><b>${r.winners.map(playerById).filter(Boolean).map((p) => esc(p.name)).join(' & ') || '–'}</b></div>`).join('');
+    const rounds = d.rounds.map((r) => `<div class="fin-round"><span>${r.cat ? esc(r.cat.emoji + ' ' + r.cat.name) : 'Runde ' + (r.ri + 1)}${hol.bonus === r.ri ? ' <b class="bonus-mini">★ ×2</b>' : ''}</span><b>${r.winners.map(playerById).filter(Boolean).map((p) => esc(p.name)).join(' & ') || '–'}</b></div>`).join('');
     const slot = slotList().find((s) => s.id === hol.slotId);
     const canSave = !!(slot || (hol.gameId && gameById(hol.gameId)));
-    return gameHead(`<div class="eyebrow">Higher or Lower · Endstand</div><div class="g-title">${title}</div>`)
-      + `<section class="fin">${list}</section><section class="fin-rounds"><div class="eyebrow">Rundensieger</div>${rounds}</section>`
-      + (local.tv ? '' : `<div class="g-foot">${canSave ? `<button class="btn primary block" type="button" data-g="save">${slot && slot.result ? 'Ergebnis aktualisieren' : 'Ergebnis eintragen'}</button>` : ''}<button class="btn ghost block" type="button" data-g="end">Schließen ohne Eintragen</button></div>`);
+    const tie = tieOf('hol', hol.id);
+    const tieBusy = !!(tie && !tie.done);
+    return gameHead(`<div class="eyebrow">Higher or Lower · Endstand</div><div class="g-title">${title}</div>`, gameTools('hol'))
+      + `<section class="fin">${list}</section>${tieHtml('hol', hol.id)}<section class="fin-rounds"><div class="eyebrow">Rundensieger</div>${rounds}</section>`
+      + (local.tv || tieBusy ? '' : `<div class="g-foot">${canSave ? `<button class="btn primary block" type="button" data-g="save">${slot && slot.result ? 'Ergebnis aktualisieren' : 'Ergebnis eintragen'}</button>` : ''}<button class="btn ghost block" type="button" data-g="end">Schließen ohne Eintragen</button></div>`);
   }
 
   /* ---------- Buzzer ---------- */
@@ -2057,7 +2236,9 @@
       const id = 'b' + uid();
       commit((st) => {
         Object.keys(st.live).forEach((k) => { if (k.indexOf('bzP_') === 0) delete st.live[k]; });
-        st.live.bz = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, q: 1, qid: id + ':1', open: false, openedAt: 0, winner: null, order: [], locked: [], scores: {} };
+        clearTie(st, 'bz');
+        st.live.bz = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, q: 1, qid: id + ':1', open: false, openedAt: 0, winner: null, order: [], locked: [], scores: {}, qm: qmPresent(), reader: null };
+        lockTips(st, slot && slot.id);
       }, { render: false });
       ui.bzSeen = id;
     }
@@ -2068,13 +2249,13 @@
   function validBuzzes(bz) {
     return state.players
       .map((p) => ({ pid: p.id, b: buzzOf(p.id) }))
-      .filter((x) => x.b && x.b.q === bz.qid && x.b.o === bz.openedAt && !bz.locked.includes(x.pid))
+      .filter((x) => x.b && x.b.q === bz.qid && x.b.o === bz.openedAt && !bz.locked.includes(x.pid) && x.pid !== bz.reader)
       .sort((a, b) => a.b.t - b.b.t);
   }
   function buzzPress() {
     const bz = live('bz');
     const me = myId();
-    if (!bz || !me) return;
+    if (!bz || !me || bz.reader === me) return;
     audioCtx();
     if (bz.winner || bz.locked.includes(me) || (ui.bzEarly[me] || 0) > Date.now()) return;
     if (!bz.open) {
@@ -2111,7 +2292,7 @@
   // er kurz, ob noch ein früherer Druck (langsamere Verbindung) eintrifft.
   let bzTimer = null;
   function buzzerHostCheck(bz) {
-    if (!Sync.active() || !isHost() || !bz.open || bz.winner || bzTimer) return;
+    if (!Sync.active() || !bzController(bz) || !bz.open || bz.winner || bzTimer) return;
     if (!validBuzzes(bz).length) return;
     bzTimer = setTimeout(() => {
       bzTimer = null;
@@ -2134,7 +2315,7 @@
   function bzMutate(fn) { commit((st) => { if (st.live.bz) fn(st.live.bz, st); }, { render: false }); render(); }
   function bzNextQ(b) { b.q += 1; b.qid = b.id + ':' + b.q; b.open = false; b.openedAt = 0; b.winner = null; b.order = []; b.locked = []; }
   const bzOpen = () => { audioCtx(); bzMutate((b) => { b.open = true; b.openedAt = serverNow(); b.winner = null; b.order = []; }); };
-  const bzRight = () => bzMutate((b) => { if (!b.winner) return; b.scores[b.winner] = (b.scores[b.winner] || 0) + 1; bzNextQ(b); });
+  const bzRight = () => bzMutate((b) => { if (!b.winner) return; b.scores[b.winner] = (b.scores[b.winner] || 0) + (b.bonusQ === b.qid ? 2 : 1); bzNextQ(b); });
   const bzWrong = () => bzMutate((b, st) => {
     if (!b.winner) return;
     b.locked = b.locked.concat(b.winner);
@@ -2146,7 +2327,7 @@
   const bzSkip = () => bzMutate((b) => bzNextQ(b));
   const bzScore = (pid, d) => bzMutate((b) => { b.scores[pid] = Math.max(0, (b.scores[pid] || 0) + d); });
   function bzClear() {
-    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'bz' || k.indexOf('bzP_') === 0) delete st.live[k]; }); }, { render: false });
+    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'bz' || k.indexOf('bzP_') === 0) delete st.live[k]; }); clearTie(st, 'bz'); }, { render: false });
     ui.gameOpen = null;
     render();
   }
@@ -2170,13 +2351,24 @@
     if (!saveResult(draft, slot, existing)) return;
     bzClear();
   }
+  // Wer bedient den Buzzer auf diesem Gerät? Der Quizmaster, ohne ihn der Vorleser, ohne Sync das eine Handy.
+  function bzController(bz) {
+    if (local.tv) return false;
+    if (!Sync.active()) return true;
+    if (isHost()) return true;
+    return !!myId() && bz.reader === myId();
+  }
   function buzzHtml(bz) {
     const syncing = Sync.active();
     const me = myId();
-    const host = !syncing || isHost();
+    const host = bzController(bz);
     const game = gameById(bz.gameId);
     const winner = bz.winner ? playerById(bz.winner) : null;
-    const head = gameHead(`<div class="eyebrow">Buzzer${game ? ' · ' + esc(game.name) : ''}</div><div class="g-title">Frage ${bz.q}</div>`, gameRoleBtn());
+    const isBonus = bz.bonusQ === bz.qid;
+    const reader = bz.reader ? playerById(bz.reader) : null;
+    const noQm = syncing && !qmPresent();
+    const head = gameHead(`<div class="eyebrow">Buzzer${game ? ' · ' + esc(game.name) : ''}</div><div class="g-title">Frage ${bz.q}${isBonus ? ' · ★ Bonus' : ''}</div>`, gameTools('bz') + gameRoleBtn());
+    const flag = isBonus ? bonusFlag('Bonusfrage: Richtig zählt doppelt') : '';
     let orderHtml = '';
     if (winner && bz.order && bz.order.length > 1) {
       const t0 = (buzzOf(bz.winner) || {}).t || 0;
@@ -2187,23 +2379,32 @@
       }).join('')}</div>`;
     }
     const winHtml = winner ? `<div class="bz-win" style="--pc:${esc(winner.color)}">${avatar(winner, 'xl', { crown: false })}<div class="bz-wn">${esc(winner.name)}</div><div class="bz-ws">${me === winner.id ? 'Du warst am schnellsten!' : 'war am schnellsten'}</div>${orderHtml}</div>` : '';
-    const scores = `<div class="bz-scores">${state.players.map((p) => `<div class="bz-sc" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}<span class="nm">${esc(p.name)}</span><b>${bz.scores[p.id] || 0}</b>${host && !local.tv ? `<button class="icon-btn" type="button" data-g="sc" data-pid="${esc(p.id)}" data-d="-1" aria-label="Punkt abziehen">−</button><button class="icon-btn" type="button" data-g="sc" data-pid="${esc(p.id)}" data-d="1" aria-label="Punkt geben">+</button>` : ''}</div>`).join('')}</div>`;
+    const scores = `<div class="bz-scores">${state.players.map((p) => `<div class="bz-sc" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}<span class="nm">${esc(p.name)}${bz.reader === p.id ? ' <small>liest vor</small>' : ''}</span><b>${bz.scores[p.id] || 0}</b>${host ? `<button class="icon-btn" type="button" data-g="sc" data-pid="${esc(p.id)}" data-d="-1" aria-label="Punkt abziehen">−</button><button class="icon-btn" type="button" data-g="sc" data-pid="${esc(p.id)}" data-d="1" aria-label="Punkt geben">+</button>` : ''}</div>`).join('')}</div>`;
     const hostCtl = () => {
       let ctl;
-      if (winner) ctl = '<button class="btn primary" type="button" data-g="bz-right">Richtig +1</button><button class="btn danger" type="button" data-g="bz-wrong">Falsch</button>';
+      if (winner) ctl = `<button class="btn primary" type="button" data-g="bz-right">Richtig +${isBonus ? 2 : 1}</button><button class="btn danger" type="button" data-g="bz-wrong">Falsch</button>`;
       else if (bz.open) ctl = '<button class="btn ghost" type="button" data-g="bz-skip">Keiner weiß es – nächste Frage</button>';
-      else ctl = '<button class="btn primary bz-go" type="button" data-g="bz-open">Freigeben</button><button class="btn ghost" type="button" data-g="bz-skip">Frage überspringen</button>';
+      else ctl = '<button class="btn primary bz-go" type="button" data-g="bz-open">Freigeben</button><button class="btn ghost" type="button" data-g="bz-skip">Frage überspringen</button>'
+        + (!bz.bonusUsed && !bz.locked.length ? '<button class="btn ghost" type="button" data-g="bz-bonus">★ Als Bonusfrage (×2)</button>' : '');
       return `<div class="bz-ctl">${ctl}</div>`;
     };
     const statusLine = bz.open ? '<div class="bz-status open">Buzzer ist offen …</div>'
       : `<div class="bz-status">${bz.locked.length ? '' : 'Frage vorlesen, dann freigeben'}</div>`;
-    const foot = `<div class="g-foot two"><button class="btn primary" type="button" data-g="bz-save">Ergebnis eintragen</button><button class="btn ghost" type="button" data-g="bz-end">Beenden</button></div>`;
+    const tie = tieOf('bz', bz.id);
+    const tieBox = tie ? tieHtml('bz', bz.id) : '';
+    const tieLink = host && !tie && tieTop('bz').length > 1 ? '<button class="link-btn tie-link" type="button" data-g="tie-start" data-k="bz">⚔️ Gleichstand an der Spitze? Stechen per Schätzfrage</button>' : '';
+    const foot = tie && !tie.done ? '' : `<div class="g-foot two"><button class="btn primary" type="button" data-g="bz-save">Ergebnis eintragen</button><button class="btn ghost" type="button" data-g="bz-end">Beenden</button></div>`;
     if (!syncing) {
       const tiles = state.players.map((p) => {
         const early = (ui.bzEarly[p.id] || 0) > Date.now();
         return `<button class="bz-tile${bz.winner === p.id ? ' win' : ''}${bz.locked.includes(p.id) || early ? ' locked' : ''}${bz.open ? ' open' : ''}" type="button" data-g="tile" data-pid="${esc(p.id)}" style="--pc:${esc(p.color)}">${avatar(p, 'lg', { crown: false })}<span>${esc(p.name)}</span>${early ? '<small>Frühstart!</small>' : bz.locked.includes(p.id) ? '<small>gesperrt</small>' : ''}</button>`;
       }).join('');
-      return head + (winHtml || statusLine) + `<div class="bz-tiles">${tiles}</div>` + hostCtl() + scores + foot;
+      return head + flag + tieBox + (winHtml || statusLine) + `<div class="bz-tiles">${tiles}</div>` + hostCtl() + scores + tieLink + foot;
+    }
+    // Vorleser (nur ohne Quizmaster): bedient den Buzzer und buzzert selbst nicht mit
+    if (me && host && bz.reader === me) {
+      return head + flag + tieBox + (winHtml || statusLine) + hostCtl() + scores
+        + `<p class="note reader-note">Du liest vor und buzzerst bei diesen Fragen nicht mit. <button class="link-btn" type="button" data-g="bz-reader-off">Vorlesen abgeben</button></p>` + tieLink + foot;
     }
     if (me) {
       const early = (ui.bzEarly[me] || 0) > Date.now();
@@ -2215,11 +2416,15 @@
       else if (pressed) { cls = 'pressed'; label = 'Gedrückt!'; sub = 'Mal sehen, ob du der Schnellste warst …'; }
       else if (bz.open) { cls = 'open'; label = 'BUZZ!'; sub = 'Jetzt drücken!'; }
       const p = playerById(me);
-      return head + (winHtml || `<div class="bz-zone"><button class="bz-btn ${cls}" type="button" data-g="buzz" style="--pc:${esc(p.color)}">${label}</button><p class="bz-sub">${sub}</p></div>`) + scores;
+      let readerHtml = '';
+      if (noQm && !reader) readerHtml = '<div class="who-cta"><p><b>Wer liest vor?</b> Ohne Quizmaster liest einer von euch die Fragen vor und gibt den Buzzer frei. Wer vorliest, buzzert dabei nicht mit.</p><button class="btn primary" type="button" data-g="bz-reader">Ich lese vor</button></div>';
+      else if (noQm && reader) readerHtml = `<p class="note reader-note">${avatar(reader, 'xs', { crown: false })} <b>${esc(reader.name)}</b> liest vor. <button class="link-btn" type="button" data-g="bz-reader">Ich übernehme</button></p>`;
+      return head + flag + tieBox + readerHtml + (winHtml || `<div class="bz-zone"><button class="bz-btn ${cls}" type="button" data-g="buzz" style="--pc:${esc(p.color)}">${label}</button><p class="bz-sub">${sub}</p></div>`) + scores;
     }
-    if (host && !local.tv) return head + (winHtml || statusLine) + hostCtl() + scores + foot;
-    return head + roleCta() + (winHtml || statusLine) + scores
-      + (local.tv || needsRole() ? '' : `<p class="note" style="text-align:center">Dieses Gerät schaut nur zu. Den Buzzer bedient ${esc(qmName())} als Quizmaster.</p>`);
+    if (host) return head + flag + tieBox + (winHtml || statusLine) + hostCtl() + scores + tieLink + foot;
+    const who = reader ? `${esc(reader.name)} liest vor und bedient den Buzzer.` : noQm ? 'Ein Spieler tippt auf seinem Handy auf „Ich lese vor“ und bedient dann den Buzzer.' : `Den Buzzer bedient ${esc(qmName())} als Quizmaster.`;
+    return head + roleCta() + flag + tieBox + (winHtml || statusLine) + scores
+      + (local.tv || needsRole() ? '' : `<p class="note" style="text-align:center">Dieses Gerät schaut nur zu. ${who}</p>`);
   }
 
   /* ---------- Bluff ----------
@@ -2314,9 +2519,12 @@
     const s = bluffSettings(game);
     const qs = bluffPick(s.questions);
     const id = 'f' + uid();
+    const qm = qmPresent();
     commit((st) => {
       Object.keys(st.live).forEach((k) => { if (k.indexOf('blA_') === 0) delete st.live[k]; });
-      st.live.bluff = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', qs, i: 0, players: st.players.map((p) => p.id), dbl: s.doubleLast, sug: s.suggest, startedAt: Date.now(), qm: qmPresent() };
+      clearTie(st);
+      st.live.bluff = { id, slotId: slot ? slot.id : null, gameId: game ? game.id : null, status: 'play', qs, i: 0, players: st.players.map((p) => p.id), dbl: s.doubleLast, sug: s.suggest, startedAt: Date.now(), qm, bonus: qm ? null : randomBonus(qs.length, s.doubleLast) };
+      lockTips(st, slot && slot.id);
       st.bluffPlays[qs[0]] = (st.bluffPlays[qs[0]] || 0) + 1;
     }, { render: false });
     ui.gameOpen = 'bluff';
@@ -2350,7 +2558,7 @@
     const last = Math.min(bl.i, bl.qs.length - 1);
     for (let qi = 0; qi <= last; qi++) {
       const q = bluffQ(bl.qs[qi]);
-      const mult = bl.dbl && bl.qs.length > 1 && qi === bl.qs.length - 1 ? 2 : 1;
+      const mult = (bl.dbl && bl.qs.length > 1 && qi === bl.qs.length - 1 ? 2 : 1) * (bl.bonus === qi ? 2 : 1);
       const gains = {};
       players.forEach((pid) => { gains[pid] = 0; });
       if (!q) {
@@ -2394,11 +2602,11 @@
     }
     return { players, totals, stats, done, cur };
   }
-  function bluffStandings(d) {
+  function bluffStandings(d, tb) {
     const rows = d.players.map((pid, i) => ({ pid, pts: d.totals[pid], truth: d.stats[pid].truth, fooled: d.stats[pid].fooled, i }));
     rows.sort((a, b) => b.pts - a.pts || a.i - b.i);
     rows.forEach((r, k) => { const p = rows[k - 1]; r.place = p && p.pts === r.pts ? p.place : k + 1; });
-    return rows;
+    return applyTieBreak(rows, tb);
   }
   // Wer ist beim Herumreichen als Nächstes dran? Die Reihenfolge wechselt mit jeder Frage.
   function bluffOrder(d) {
@@ -2504,14 +2712,14 @@
     render();
   }
   function bluffClear() {
-    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'bluff' || k.indexOf('blA_') === 0) delete st.live[k]; }); }, { render: false });
+    commit((st) => { Object.keys(st.live).forEach((k) => { if (k === 'bluff' || k.indexOf('blA_') === 0) delete st.live[k]; }); clearTie(st, 'bluff'); }, { render: false });
     ui.gameOpen = null;
     render();
   }
   function bluffSaveResult() {
     const bl = live('bluff');
     if (!bl) return;
-    const rows = bluffStandings(bluffDerive(bl));
+    const rows = bluffStandings(bluffDerive(bl), bl.tb);
     const order = rows.map((r) => r.pid);
     const ties = rows.slice(1).map((r, k) => r.place === rows[k].place);
     state.players.forEach((p) => { if (!order.includes(p.id)) { order.push(p.id); ties.push(false); } });
@@ -2582,9 +2790,11 @@
       const pts = rvPending ? d.totals[pid] - cur.gains[pid] : d.totals[pid];
       return `<div class="hp${pid === me ? ' me' : ''}${actor === pid ? ' now' : ''}" style="--pc:${esc(p.color)}"${pid === me ? ' title="Das bist du"' : ''}>${meTag(pid)}${avatar(p, 'sm', { crown: false })}<div class="hp-t"><b>${esc(p.name)}</b><span class="hp-m"><span class="bl-pts">${fmtPts(pts)} P.</span></span>${st}</div></div>`;
     }).join('');
-    const truthBox = qmView && cur.phase !== 'reveal' ? `<div class="bl-qm-truth"><span>🔒 Die Wahrheit · nur du siehst sie</span><b>${esc(bluffFmt(q.a))}</b></div>` : '';
-    const card = `<section class="bl-card${cur.phase === 'reveal' ? ' mini' : ''}"><div class="hc-k">Frage ${cur.qi + 1} von ${total}${cur.mult > 1 ? ' · <span class="bl-x2">zählt doppelt</span>' : ''}</div><div class="bl-cat">${esc(q.cat)}</div><p class="bl-q">${bluffSentence(q, false)}</p>${truthBox}</section>`;
-    const head = gameHead(`<div class="eyebrow">Bluff · Frage ${cur.qi + 1} von ${total}</div><div class="g-title">${cur.phase === 'write' ? 'Erfinde eine Antwort' : cur.phase === 'vote' ? 'Was ist die Wahrheit?' : 'Auflösung'}</div>`, gameRoleBtn());
+    const isBonus = bl.bonus === cur.qi;
+    const canBonus = qmView && bl.qm && bl.bonus == null && cur.phase === 'write' && total > 1 && !(bl.dbl && cur.qi === total - 1);
+    const truthBox = qmView && cur.phase !== 'reveal' ? `<div class="bl-qm-truth"><span>🔒 Die Wahrheit · nur du siehst sie</span><b>${esc(bluffFmt(q.a))}</b>${canBonus ? '<button class="btn small ghost bonus-btn" type="button" data-g="bl-bonus">★ Zur Bonusfrage machen (×2)</button>' : ''}</div>` : '';
+    const card = `<section class="bl-card${cur.phase === 'reveal' ? ' mini' : ''}"><div class="hc-k">Frage ${cur.qi + 1} von ${total}${isBonus ? ' · <span class="bl-x2">★ Bonusfrage · zählt doppelt</span>' : cur.mult > 1 ? ' · <span class="bl-x2">zählt doppelt</span>' : ''}</div><div class="bl-cat">${esc(q.cat)}</div><p class="bl-q">${bluffSentence(q, false)}</p>${truthBox}</section>`;
+    const head = gameHead(`<div class="eyebrow">Bluff · Frage ${cur.qi + 1} von ${total}${isBonus ? ' · ★ Bonus' : ''}</div><div class="g-title">${cur.phase === 'write' ? 'Erfinde eine Antwort' : cur.phase === 'vote' ? 'Was ist die Wahrheit?' : 'Auflösung'}</div>`, gameTools('bluff') + gameRoleBtn());
     const a = head + `<div class="hol-players bl-players">${strip}</div>` + card;
     let composer = null;
     let b = '';
@@ -2752,20 +2962,21 @@
     return `<section class="bl-rvs" aria-live="polite">${cards}</section>${ctl}`;
   }
   function bluffFinalHtml(bl, d) {
-    const rows = bluffStandings(d);
+    const rows = bluffStandings(d, bl.tb);
     const firsts = rows.filter((r) => r.place === 1);
-    const title = firsts.length === 1 ? `${esc(playerById(firsts[0].pid).name)} gewinnt!` : 'Gleichstand an der Spitze!';
+    const title = firsts.length === 1 ? `${esc(playerById(firsts[0].pid).name)} gewinnt${firsts[0].tb ? ' das Stechen' : ''}!` : 'Gleichstand an der Spitze!';
     const list = rows.map((r) => {
       const p = playerById(r.pid);
-      return `<div class="fin-row" style="--pc:${esc(p.color)}"><span class="pl">${r.place}.</span>${avatar(p, 'sm', { crown: false })}<b>${esc(p.name)}</b><span class="muted">${fmtPts(r.pts)} ${plural(r.pts, 'Punkt', 'Punkte')} · ${r.truth}× Wahrheit erkannt · ${r.fooled}× andere reingelegt</span></div>`;
+      return `<div class="fin-row" style="--pc:${esc(p.color)}"><span class="pl">${r.place}.</span>${avatar(p, 'sm', { crown: false })}<b>${esc(p.name)}</b><span class="muted">${fmtPts(r.pts)} ${plural(r.pts, 'Punkt', 'Punkte')} · ${r.truth}× Wahrheit erkannt · ${r.fooled}× andere reingelegt${r.tb ? ' · ⚔️ Stechen' : ''}</span></div>`;
     }).join('');
     const best = bluffBestLie(d);
     const bestHtml = best ? `<section class="bl-best"><div class="eyebrow">Beste Lüge des Spiels</div><p class="bl-best-t">„${esc(best.o.text)}“</p><p class="bl-best-s">von ${nameList(best.o.authors)} · ${best.o.authors.length > 1 ? 'haben' : 'hat'} ${best.n === 1 ? 'einen Mitspieler' : best.n + ' Mitspieler'} reingelegt</p></section>` : '';
     const slot = slotList().find((s) => s.id === bl.slotId);
     const canSave = !!(slot || (bl.gameId && gameById(bl.gameId)));
-    return gameHead(`<div class="eyebrow">Bluff · Endstand</div><div class="g-title">${title}</div>`)
-      + `<section class="fin">${list}</section>${bestHtml}`
-      + (local.tv ? '' : `<div class="g-foot">${canSave ? `<button class="btn primary block" type="button" data-g="bl-save">${slot && slot.result ? 'Ergebnis aktualisieren' : 'Ergebnis eintragen'}</button>` : ''}<button class="btn ghost block" type="button" data-g="bl-end">Schließen ohne Eintragen</button></div>`);
+    const tieBusy = (() => { const t = tieOf('bluff', bl.id); return !!(t && !t.done); })();
+    return gameHead(`<div class="eyebrow">Bluff · Endstand</div><div class="g-title">${title}</div>`, gameTools('bluff'))
+      + `<section class="fin">${list}</section>${tieHtml('bluff', bl.id)}${bestHtml}`
+      + (local.tv || tieBusy ? '' : `<div class="g-foot">${canSave ? `<button class="btn primary block" type="button" data-g="bl-save">${slot && slot.result ? 'Ergebnis aktualisieren' : 'Ergebnis eintragen'}</button>` : ''}<button class="btn ghost block" type="button" data-g="bl-end">Schließen ohne Eintragen</button></div>`);
   }
   function renderBluff(el, bl) {
     const v = bluffView(bl);
@@ -2859,6 +3070,13 @@
     }
     if (a === 'bl-step') { bluffRevealStep(); return; }
     if (a === 'bl-next') { bluffNext(); return; }
+    if (a === 'bl-bonus') {
+      commit((st) => { const x = st.live.bluff; if (x && x.id === bl.id && x.bonus == null) x.bonus = x.i; }, { render: false });
+      initAudio();
+      jokerSound();
+      render();
+      return;
+    }
     if (a === 'bl-save') { bluffSaveResult(); return; }
     if (a === 'bl-end' || a === 'bl-abort') {
       const ok = await confirmSheet({ title: a === 'bl-abort' ? 'Spiel abbrechen?' : 'Ohne Ergebnis schließen?', text: 'Bluff wird auf allen Handys beendet. Es werden keine Punkte eingetragen.', ok: a === 'bl-abort' ? 'Spiel abbrechen' : 'Schließen', cancel: 'Zurück', danger: true });
@@ -2935,8 +3153,19 @@
     if (a === 'buzz' || a === 'tile') return;
     if (a === 'min') { ui.gameOpen = null; render(); return; }
     if (a === 'role') { openWhoAmI(); return; }
+    if (onToolClick(a, b)) return;
     if (a.indexOf('bl-') === 0) { onBluffClick(a, b); return; }
     const hol = live('hol');
+    if (a === 'hol-bonus' && hol) {
+      commit((st) => { const h = st.live.hol; if (h && h.id === hol.id && h.bonus == null) h.bonus = h.r; }, { render: false });
+      initAudio();
+      jokerSound();
+      render();
+      return;
+    }
+    if (a === 'bz-reader') { bzMutate((x) => { x.reader = myId() || null; }); return; }
+    if (a === 'bz-reader-off') { bzMutate((x) => { if (x.reader === myId()) x.reader = null; }); return; }
+    if (a === 'bz-bonus') { initAudio(); jokerSound(); bzMutate((x) => { if (!x.bonusUsed && !x.open && !x.winner) { x.bonusQ = x.qid; x.bonusUsed = true; } }); return; }
     if (a === 'gap') { ui.holSel = Number(b.dataset.i); renderGame(); return; }
     if (a === 'confirm' && hol) {
       const t = holTurn(holDerive(hol).cur);
@@ -3035,6 +3264,389 @@
   }
 
   /* ======================================================================
+     6d. QUIZMASTER-WERKZEUGE: Ansagen, Countdown, Bonusfrage, Stechen
+     Alles läuft mit und ohne Quizmaster: Ist einer da, bedient er die
+     Werkzeuge. Sonst darf jeder Spieler sie benutzen, und bei der
+     Bonusfrage entscheidet der Zufall.
+     ====================================================================== */
+  // Darf dieses Gerät gerade moderieren (Countdown, Stechen …)?
+  const leadsHere = () => !local.tv && (!Sync.active() || isHost() || (!qmPresent() && roleValid()));
+  const fmtNum = (n) => Number(n).toLocaleString('de-DE', { maximumFractionDigits: 3 });
+  // Zahlen so lesen, wie man sie tippt: „1.250“, „1.250,5“, „3,5“, „12 000“
+  function parseGuess(v) {
+    let s = String(v == null ? '' : v).trim().replace(/\s+/g, '').replace(/[’']/g, '');
+    if (!s) return NaN;
+    if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (s.includes(',')) s = s.replace(',', '.');
+    else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    const n = Number(s);
+    return isFinite(n) ? n : NaN;
+  }
+  const gameKind = (g) => (!g ? null : g.mode === 'hol' ? 'hol' : g.mode === 'bluff' ? 'bluff' : g.buzzer ? 'bz' : null);
+  function gameTools(kind) {
+    if (local.tv) return '';
+    const mod = `<button class="icon-btn g-tool" type="button" data-g="mod" data-k="${kind}" title="${isHost() ? 'Ansage zum Vorlesen' : 'Regeln'}" aria-label="${isHost() ? 'Ansage zum Vorlesen' : 'Regeln anzeigen'}">📣</button>`;
+    const tmr = leadsHere() ? '<button class="icon-btn g-tool" type="button" data-g="timer" title="Countdown" aria-label="Countdown starten">⏱</button>' : '';
+    return `<div class="g-tools"><span class="g-timer-slot"></span>${mod}${tmr}</div>`;
+  }
+  const bonusFlag = (text) => `<div class="bonus-flag">★ ${text}</div>`;
+
+  /* ---------- Ansagen (Moderationskarten) ---------- */
+  function modCard(kind, gameId) {
+    const host = qmPresent();
+    const lead = leadsHere();
+    const slots = slotList();
+    const names = (ids) => ids.map(playerById).filter(Boolean).map((p) => `<b>${esc(p.name)}</b>`);
+    const joinNames = (arr) => (arr.length > 1 ? arr.slice(0, -1).join(', ') + ' und ' + arr[arr.length - 1] : arr.join(''));
+    const beforeStart = (k) => (!live(k) && (Number(RULES.jokersPerNight) > 0 || tipsPerNight() > 0)
+      ? '<p class="mod-note">Vorher fragen: Will jemand einen Joker oder den Tipp-Joker setzen? Mit dem Start schließen die Tipps.</p>' : '');
+    if (kind === 'open') {
+      const quiz = slots.filter((s) => isQuizGame(s.game));
+      const pg = state.games.find((g) => g.scoring === 'placement');
+      const pts = pg ? pg.points.slice(0, state.players.length).map(fmtPts) : ['3', '1', '0'];
+      const free = state.games.filter((g) => g.scoring === 'free' && slots.some((s) => s.gameId === g.id));
+      const items = [`Punkte: Platz 1 bekommt ${pts[0]}, Platz 2 ${pts[1]}${pts[2] != null ? ', Platz 3 ' + pts[2] : ''}.${free.length ? ` Bei ${joinNames(free.map((g) => esc(g.name)))} zählt jede richtige Antwort einen Punkt.` : ''}`];
+      if (Number(RULES.jokersPerNight) > 0) items.push(`Joker: Jeder hat ${RULES.jokersPerNight === 1 ? 'einen Joker' : RULES.jokersPerNight + ' Joker'}. Vor einem Spiel ansagen, dann zählen die eigenen Punkte in diesem Spiel doppelt.`);
+      if (Number(RULES.comebackStreak) > 0) items.push(`Wer ${RULES.comebackStreak}-mal hintereinander Letzter wird, bekommt einen Aufhol-Joker.`);
+      if (tipsPerNight() > 0) items.push(`Tipp-Joker: Jeder darf ${tipsPerNight() === 1 ? 'einmal' : tipsPerNight() + '-mal'} am Abend vor einem Spiel geheim tippen, wer gewinnt, auch sich selbst. Richtig getippt gibt einen Extrapunkt.`);
+      if (slots.some((s) => s.multiplier > 1)) items.push('Das letzte Spiel ist das Finale und zählt doppelt.');
+      return {
+        title: 'Eröffnung',
+        html: `<p>Willkommen zur <b>${esc(state.session.name)}</b>! Heute treten ${joinNames(names(state.players.map((p) => p.id)))} gegeneinander an.</p>
+          <p>Auf dem Plan stehen ${slots.length} Spiele.${quiz.length ? ` Los geht es mit dem Quizblock: ${joinNames(quiz.map((s) => esc(s.game.name)))}.` : ''}</p>
+          <ul>${items.map((t) => `<li>${t}</li>`).join('')}</ul>
+          <p>Viel Glück! Wer will für das erste Spiel einen Joker oder den Tipp-Joker setzen?</p>`,
+        tip: 'Lies das langsam vor und warte nach der Joker-Frage kurz. Joker und Tipps setzen die Spieler selbst in der App.',
+      };
+    }
+    if (kind === 'close') {
+      const rows = standings();
+      const next = slots.find((s) => !s.result);
+      return {
+        title: 'Abschluss Quizblock',
+        html: `<p>Das war der Quizblock! Danke fürs Mitspielen.</p>
+          <p>Der Zwischenstand:</p><ol>${rows.map((r) => `<li><b>${esc(r.p.name)}</b> mit ${fmtPts(r.points)} ${plural(r.points, 'Punkt', 'Punkten')}</li>`).join('')}</ol>
+          ${next && next.game ? `<p>Weiter geht es mit <b>${esc(next.game.name)}</b>. Viel Erfolg!</p>` : ''}`,
+        tip: 'Danach unten auf dem Pult „Als Quizmaster abmelden“ tippen.',
+      };
+    }
+    if (kind === 'tie') {
+      const t = live('tie');
+      return {
+        title: 'Stechen',
+        html: `<p><b>Stechen!</b> ${t ? joinNames(names(t.players)) : 'Zwei von euch'} liegen gleichauf.</p>
+          <ul><li>${host || lead ? 'Ich stelle' : 'Es kommt'} eine Schätzfrage. Gesucht ist eine Zahl.</li><li>Ihr tippt eure Schätzung geheim ins Handy.</li><li>Wer näher an der richtigen Zahl liegt, gewinnt.</li></ul>`,
+        tip: 'Nimm eine Frage, deren Antwort niemand genau weiß, zum Beispiel ein Jahr oder eine Anzahl.',
+      };
+    }
+    const running = live(kind);
+    const g = gameById(gameId || (running && running.gameId)) || state.games.find((x) => gameKind(x) === kind);
+    if (kind === 'hol') {
+      const s = holSettings(g);
+      return {
+        title: 'Higher or Lower',
+        html: beforeStart('hol') + `<p><b>Higher or Lower</b>: ${s.rounds} ${plural(s.rounds, 'Runde', 'Runden')}, jede mit einem eigenen Thema.</p>
+          <ul><li>Eine Karte liegt offen, ihr Wert ist bekannt. Dann kommen bis zu ${s.cards} weitere Karten.</li>
+          <li>Ihr seid reihum dran und legt die neue Karte in die passende Lücke: höher oder niedriger. Eure Wahl bleibt geheim, bis ${host ? 'ich aufdecke' : 'alle gewählt haben'}.</li>
+          <li>Jeder hat ${s.lives} ${plural(s.lives, 'Leben', 'Leben')} pro Runde. Falsch kostet ein Leben, ohne Leben seid ihr raus. Wer übrig bleibt, gewinnt die Runde.</li>
+          <li>Wer die meisten Runden gewinnt, gewinnt das Spiel.</li>
+          ${s.rounds > 1 ? `<li>${host ? 'Eine Runde mache ich zur Bonusrunde' : 'Eine zufällige Runde ist die Bonusrunde'}: Ihr Sieg zählt doppelt.</li>` : ''}</ul>`,
+        tip: host ? 'Mach die Bonusrunde am Anfang einer Runde scharf (Knopf erscheint bei der ersten Karte). Vor dem Aufdecken fragen, wer sich sicher ist.' : '',
+      };
+    }
+    if (kind === 'bluff') {
+      const s = bluffSettings(g);
+      return {
+        title: 'Bluff',
+        html: beforeStart('bluff') + `<p><b>Bluff</b>: ${s.questions} ${plural(s.questions, 'Frage', 'Fragen')}${s.doubleLast && s.questions > 1 ? ', die letzte zählt doppelt' : ''}.</p>
+          <ul><li>Jede Frage ist ein Satz mit einer Lücke.${host ? ' Ich lese ihn vor.' : ''}</li>
+          <li>Jeder schreibt heimlich eine erfundene Antwort, die die anderen für wahr halten sollen.</li>
+          <li>Dann erscheinen alle Antworten gemischt mit der echten. Tippt auf die, die ihr für wahr haltet.</li>
+          <li>Wahrheit gefunden: ${BLUFF_TRUTH} Punkte. Jeder, der auf deine Lüge reinfällt: ${BLUFF_FOOL} Punkt für dich.</li>
+          ${s.questions > 1 ? `<li>${host ? 'Eine Frage mache ich zur Bonusfrage' : 'Eine zufällige Frage ist die Bonusfrage'}: Sie zählt doppelt.</li>` : ''}</ul>`,
+        tip: host ? 'Die Bonusfrage legst du fest, solange die Spieler schreiben. Beim Aufdecken nach jeder Lüge fragen, wer sie geschrieben hat.' : '',
+      };
+    }
+    if (kind === 'bz') {
+      const name = g ? g.name : 'Quiz';
+      const extra = g && g.id === 'filme' ? `<p>${host || lead ? 'Ich beschreibe' : 'Wer vorliest, beschreibt'} einen Film, zum Beispiel mit einem Zitat, der Handlung, Emojis oder Musik. Wer ihn erkennt, buzzert.</p>`
+        : g && g.id === 'schaetzen' ? `<p>Gesucht ist immer eine Zahl. ${host || lead ? 'Was als richtig zählt, sage ich vor der ersten Frage.' : 'Was als richtig zählt, legt ihr vor der ersten Frage fest.'}</p>` : '';
+      return {
+        title: name,
+        html: beforeStart('bz') + `<p><b>${esc(name)}</b> mit dem Buzzer.</p>${extra}
+          <ul><li>Die Frage wird vorgelesen. Erst nach der Freigabe dürft ihr drücken. Wer zu früh drückt, ist 2 Sekunden gesperrt.</li>
+          <li>Wer zuerst buzzert, antwortet. Richtig: 1 Punkt. Falsch: Für diese Frage gesperrt, die anderen dürfen nochmal.</li>
+          <li>Eine Frage wird zur Bonusfrage und zählt doppelt.</li>
+          ${!host && Sync.active() ? '<li>Wer vorliest, buzzert bei seinen Fragen nicht mit.</li>' : ''}</ul>`,
+        tip: 'Vor der Freigabe die Frage ganz vorlesen. Die Bonusfrage markierst du vor dem Freigeben.',
+      };
+    }
+    return null;
+  }
+  function openModCard(kind, gameId) {
+    const c = modCard(kind, gameId);
+    if (!c) return;
+    openSheet({
+      title: c.title,
+      body: () => `<div class="mod-card">${c.html}</div>${c.tip && leadsHere() ? `<p class="mod-tip"><b>Tipp für dich:</b> ${esc(c.tip)}</p>` : ''}`,
+    });
+  }
+
+  /* ---------- Countdown ---------- */
+  const TIMER_CHOICES = [10, 20, 30, 45, 60, 90];
+  const timerLeft = (t) => (t ? (Number(t.at) + Number(t.dur) * 1000 - serverNow()) / 1000 : -999);
+  let timerIv = null;
+  function startTimer(sec) {
+    initAudio();
+    commit((st) => { st.live.timer = { id: 'c' + uid(), at: serverNow(), dur: sec }; }, { render: false });
+    timerTick();
+  }
+  function stopTimer() {
+    commit((st) => { delete st.live.timer; }, { render: false });
+    timerTick();
+  }
+  function openTimerSheet() {
+    const t = live('timer');
+    const running = timerLeft(t) > 0;
+    openSheet({
+      title: 'Countdown',
+      body: () => `<p class="sheet-text">Läuft auf allen Handys und dem Fernseher. Am Ende ertönt ein Gong.</p>
+        <div class="timer-grid">${TIMER_CHOICES.map((s) => `<button class="btn ghost" type="button" data-s="go" data-v="${s}">${s} s</button>`).join('')}</div>
+        ${running ? '<button class="btn danger block" type="button" data-s="stop">Countdown stoppen</button>' : ''}`,
+      on: (a, el, ev, api) => {
+        if (a === 'go') { api.close(); startTimer(Number(el.dataset.v)); }
+        if (a === 'stop') { api.close(); stopTimer(); }
+      },
+    });
+  }
+  function timerTick() {
+    const t = live('timer');
+    const left = timerLeft(t);
+    let el = document.getElementById('gn-timer');
+    if (!t || left < -4 || left > Number(t.dur) + 5) {
+      if (el) el.remove();
+      if (timerIv) { clearInterval(timerIv); timerIv = null; }
+      return;
+    }
+    if (!el) {
+      el = document.createElement('button');
+      el.id = 'gn-timer';
+      el.type = 'button';
+      el.className = 'gn-timer';
+      el.setAttribute('role', 'timer');
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (leadsHere()) openTimerSheet(); });
+    }
+    // Im Spiel sitzt der Countdown oben im Kopf, sonst schwebt er rechts unter der Kopfzeile.
+    const slot = document.querySelector('#game .g-timer-slot');
+    const parent = slot || document.body;
+    if (el.parentNode !== parent) parent.appendChild(el);
+    el.classList.toggle('in-head', !!slot);
+    const s = Math.max(0, Math.ceil(left));
+    el.classList.toggle('low', left > 0 && s <= 5);
+    el.classList.toggle('done', left <= 0);
+    el.classList.toggle('tv', !!local.tv);
+    const txt = left > 0 ? `⏱ ${s}` : '⏰ Zeit!';
+    if (el.textContent !== txt) el.textContent = txt;
+    if (left > 0 && s <= 3 && ui.timerBeep !== t.id + ':' + s) { ui.timerBeep = t.id + ':' + s; tone(988, 0.09, 'square', 0.05); }
+    if (left <= 0 && left > -1.5 && ui.timerDone !== t.id) {
+      ui.timerDone = t.id;
+      [523.25, 392].forEach((f, i) => tone(f, 0.7, 'triangle', 0.12, i * 0.28));
+      if (navigator.vibrate) { try { navigator.vibrate([200, 80, 200]); } catch (e) { /* egal */ } }
+    }
+    if (!timerIv) timerIv = setInterval(timerTick, 200);
+  }
+
+  /* ---------- Bonusfrage ---------- */
+  // Ohne Quizmaster lost die App beim Start eine Bonusrunde bzw. -frage aus.
+  function randomBonus(n, skipLast, from = 0) {
+    const pool = [];
+    for (let i = from; i < n; i++) if (!(skipLast && i === n - 1)) pool.push(i);
+    return n > 1 && pool.length ? pool[randInt(pool.length)] : null;
+  }
+
+  /* ---------- Stechen (Schätzfrage bei Gleichstand an der Spitze) ---------- */
+  const tieOf = (kind, srcId) => { const t = live('tie'); return t && t.src === kind && t.gid === srcId ? t : null; };
+  const tieGuess = (t, pid) => { const g = live('tieG_' + pid); return g && g.t === t.id + ':' + t.rnd && isFinite(Number(g.v)) ? Number(g.v) : null; };
+  // Fragen stellt der Quizmaster, ohne ihn jemand, der nicht selbst im Stechen steckt.
+  function tieCanAsk(players) {
+    if (local.tv) return false;
+    if (!Sync.active()) return true;
+    if (isHost()) return true;
+    if (qmPresent()) return false;
+    return roleValid() && !players.includes(myId());
+  }
+  function clearTie(st, kind) {
+    const t = st.live.tie;
+    if (kind && (!t || t.src !== kind)) return;
+    delete st.live.tie;
+    Object.keys(st.live).forEach((k) => { if (k.indexOf('tieG_') === 0) delete st.live[k]; });
+  }
+  // Gleichstand an der Spitze im laufenden Spiel?
+  function tieTop(kind) {
+    const s = live(kind);
+    if (!s) return [];
+    if (kind === 'hol') return s.status === 'done' ? holStandings(holDerive(s), s.tb).filter((r) => r.place === 1).map((r) => r.pid) : [];
+    if (kind === 'bluff') return s.status === 'done' ? bluffStandings(bluffDerive(s), s.tb).filter((r) => r.place === 1).map((r) => r.pid) : [];
+    const sc = state.players.map((p) => ({ pid: p.id, v: s.scores[p.id] || 0 }));
+    const max = Math.max(...sc.map((x) => x.v));
+    return max > 0 ? sc.filter((x) => x.v === max).map((x) => x.pid) : [];
+  }
+  function tieStart(kind) {
+    const s = live(kind);
+    const ids = tieTop(kind);
+    if (!s || ids.length < 2 || !tieCanAsk(ids)) return;
+    commit((st) => {
+      clearTie(st);
+      st.live.tie = { id: 't' + uid(), src: kind, gid: s.id, players: ids, rnd: 1, done: false, result: null };
+    }, { render: false });
+    initAudio();
+    revealSound();
+    render();
+  }
+  function tieResolve(answer, manual) {
+    const t = live('tie');
+    if (!t || t.done || !isFinite(answer)) return;
+    const g = {};
+    t.players.forEach((pid) => { const v = manual ? manual[pid] : tieGuess(t, pid); if (isFinite(v)) g[pid] = v; });
+    if (t.players.some((pid) => !(pid in g))) { toast('Es fehlen noch Schätzungen.'); return; }
+    const dist = (pid) => Math.abs(g[pid] - answer);
+    const best = Math.min(...t.players.map(dist));
+    const win = t.players.filter((pid) => dist(pid) === best);
+    const winner = win.length === 1 ? win[0] : null;
+    commit((st) => {
+      const tt = st.live.tie;
+      if (!tt || tt.id !== t.id || tt.done) return;
+      tt.done = true;
+      tt.result = { answer, guesses: g, winner };
+      const src = st.live[tt.src];
+      if (winner && src && src.id === tt.gid) {
+        src.tb = winner;
+        if (tt.src === 'bz') src.scores[winner] = (src.scores[winner] || 0) + 1;
+      }
+    }, { render: false });
+    initAudio();
+    if (winner) fanfare(); else revealSound();
+    render();
+  }
+  function tieAgain() {
+    commit((st) => { const t = st.live.tie; if (!t) return; t.rnd += 1; t.done = false; t.result = null; }, { render: false });
+    render();
+  }
+  async function tieCancel() {
+    const t = live('tie');
+    if (!t) return;
+    if (!t.done) {
+      const ok = await confirmSheet({ title: 'Stechen abbrechen?', text: 'Dann bleibt der Gleichstand, und die Punkte werden geteilt.', ok: 'Abbrechen', cancel: 'Zurück', danger: true });
+      if (!ok) return;
+    }
+    commit((st) => clearTie(st), { render: false });
+    render();
+  }
+  function numberField(id, label) {
+    return `<label class="field"><span>${label}</span><input class="input tie-in" id="${id}" inputmode="decimal" autocomplete="off" placeholder="Zahl"></label>`;
+  }
+  function tieGuessSheet(pid) {
+    const t = live('tie');
+    const p = playerById(pid);
+    if (!t || t.done || !p) return;
+    const forOther = Sync.active() && pid !== myId();
+    const s = openSheet({
+      title: forOther ? `Schätzung für ${p.name}` : 'Deine Schätzung',
+      body: () => `<p class="sheet-text">Tipp die Zahl ein. Die anderen sehen sie erst bei der Auflösung.</p>${numberField('tie-g', 'Schätzung')}<button class="btn primary block" type="button" data-s="ok">Abschicken</button>`,
+      on: (a, el, ev, api) => {
+        if (a !== 'ok') return;
+        const v = parseGuess(api.body.querySelector('#tie-g').value);
+        if (!isFinite(v)) { toast('Bitte eine Zahl eintragen.'); return; }
+        const cur = live('tie');
+        if (!cur || cur.id !== t.id) { api.close(); return; }
+        commit((st) => { st.live['tieG_' + pid] = { t: cur.id + ':' + cur.rnd, v }; }, { render: false });
+        api.close();
+        render();
+      },
+    });
+    setTimeout(() => { const i = s.body.querySelector('#tie-g'); if (i) i.focus(); }, 280);
+  }
+  function tieAnswerSheet() {
+    const t = live('tie');
+    if (!t || t.done) return;
+    const local1 = !Sync.active();
+    openSheet({
+      title: 'Stechen auflösen',
+      body: () => (local1 ? '<p class="sheet-text">Am besten schreibt jeder seine Zahl vorher auf einen Zettel. Dann alles hier eintragen.</p>' + t.players.map((pid) => numberField('tie-p-' + pid, `Schätzung von ${esc(playerById(pid).name)}`)).join('') : '<p class="sheet-text">Alle haben geschätzt. Trag jetzt die richtige Zahl ein.</p>')
+        + numberField('tie-a', 'Richtige Zahl') + '<button class="btn primary block" type="button" data-s="ok">Auflösen</button>',
+      on: (a, el, ev, api) => {
+        if (a !== 'ok') return;
+        const ans = parseGuess(api.body.querySelector('#tie-a').value);
+        if (!isFinite(ans)) { toast('Bitte die richtige Zahl eintragen.'); return; }
+        let manual = null;
+        if (local1) {
+          manual = {};
+          for (const pid of t.players) {
+            const v = parseGuess(api.body.querySelector('#tie-p-' + pid).value);
+            if (!isFinite(v)) { toast(`Es fehlt die Schätzung von ${playerById(pid).name}.`); return; }
+            manual[pid] = v;
+          }
+        }
+        api.close();
+        tieResolve(ans, manual);
+      },
+    });
+  }
+  // Der Stechen-Kasten in den Endansichten (bzw. beim Buzzer oben)
+  function tieHtml(kind, srcId) {
+    const t = tieOf(kind, srcId);
+    if (!t) {
+      const ids = tieTop(kind);
+      if (ids.length < 2 || local.tv || kind === 'bz') return '';
+      if (tieCanAsk(ids)) return `<section class="tie-box"><div class="eyebrow">Gleichstand an der Spitze</div><p class="note">Eine Schätzfrage kann entscheiden: Wer näher dran ist, gewinnt das Spiel allein.</p><button class="btn ghost block" type="button" data-g="tie-start" data-k="${kind}">⚔️ Stechen starten</button></section>`;
+      if (Sync.active() && !qmPresent() && ids.length >= state.players.length) return '<p class="note">Alle gleichauf: Ohne Quizmaster kann niemand die Stechfrage stellen, deshalb wird geteilt.</p>';
+      return '';
+    }
+    const asker = tieCanAsk(t.players);
+    const me = myId();
+    const chip = (pid, extra) => { const p = playerById(pid); return p ? `<span class="bl-chip" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}${esc(p.name)}${extra || ''}</span>` : ''; };
+    if (t.done && t.result) {
+      const r = t.result;
+      const rows = t.players.slice().sort((a, b) => Math.abs(r.guesses[a] - r.answer) - Math.abs(r.guesses[b] - r.answer)).map((pid) => {
+        const p = playerById(pid);
+        const dist = Math.abs(r.guesses[pid] - r.answer);
+        return `<div class="tie-row${r.winner === pid ? ' win' : ''}" style="--pc:${esc(p.color)}">${avatar(p, 'xs', { crown: false })}<b>${esc(p.name)}</b><span class="tie-v">${fmtNum(r.guesses[pid])}</span><span class="tie-d">${dist === 0 ? 'genau!' : '± ' + fmtNum(dist)}</span></div>`;
+      }).join('');
+      const w = playerById(r.winner);
+      return `<section class="tie-box done"><div class="eyebrow">⚔️ Stechen${t.rnd > 1 ? ' · Runde ' + t.rnd : ''}</div><div class="tie-ans">Richtig: <b>${fmtNum(r.answer)}</b></div>${rows}
+        ${w ? `<p class="rv-win">⚔️ ${esc(w.name)} gewinnt das Stechen!${kind === 'bz' ? ' +1 Punkt' : ''}</p>` : '<p class="rv-msg">Wieder gleich nah dran!</p>'}
+        ${asker ? (w ? (kind === 'bz' ? '<button class="btn ghost block" type="button" data-g="tie-cancel">Weiter</button>' : '') : '<button class="btn primary block" type="button" data-g="tie-again">Noch eine Stechfrage</button><button class="link-btn" type="button" data-g="tie-cancel">Gleichstand lassen</button>') : ''}</section>`;
+    }
+    const status = t.players.map((pid) => chip(pid, tieGuess(t, pid) != null ? ' ✓' : ' …')).join('');
+    let act = '';
+    if (Sync.active() && me && t.players.includes(me)) {
+      act = tieGuess(t, me) == null ? '<button class="btn primary block" type="button" data-g="tie-guess">Deine Schätzung abgeben</button>' : '<p class="note">✓ Deine Schätzung ist abgegeben.</p>';
+    } else if (asker) {
+      if (!Sync.active()) act = '<button class="btn primary block" type="button" data-g="tie-answer">Schätzungen und Lösung eintragen</button>';
+      else {
+        const all = t.players.every((pid) => tieGuess(t, pid) != null);
+        const noDev = t.players.filter((pid) => tieGuess(t, pid) == null && !hasDevice(pid));
+        act = noDev.map((pid) => `<button class="link-btn g-proxy" type="button" data-g="tie-guess" data-pid="${esc(pid)}">${esc(playerById(pid).name)} hat kein Handy? Schätzung hier eintragen</button>`).join('')
+          + `<button class="btn primary block" type="button" data-g="tie-answer"${all ? '' : ' disabled'}>${all ? 'Richtige Zahl eintragen und auflösen' : 'Warte auf die Schätzungen …'}</button>`;
+      }
+    }
+    const q = asker ? 'Stell jetzt eine Schätzfrage. Gesucht ist eine Zahl.' : 'Gleich kommt eine Schätzfrage. Wer näher dran ist, gewinnt.';
+    return `<section class="tie-box"><div class="eyebrow">⚔️ Stechen${t.rnd > 1 ? ' · Runde ' + t.rnd : ''}</div><p class="tie-q">${q}</p><div class="tie-st">${status}</div>${act}
+      ${asker ? '<div class="tie-links"><button class="link-btn" type="button" data-g="mod" data-k="tie">📣 Ansage</button><button class="link-btn danger" type="button" data-g="tie-cancel">Stechen abbrechen</button></div>' : ''}</section>`;
+  }
+  // Klicks auf die Werkzeuge in allen Spielen
+  function onToolClick(a, b) {
+    if (a === 'mod') { const k = b.dataset.k; const s = live(k); openModCard(k, s && s.gameId); return true; }
+    if (a === 'timer') { openTimerSheet(); return true; }
+    if (a === 'tie-start') { tieStart(b.dataset.k); return true; }
+    if (a === 'tie-guess') { tieGuessSheet(b.dataset.pid || myId()); return true; }
+    if (a === 'tie-answer') { tieAnswerSheet(); return true; }
+    if (a === 'tie-again') { tieAgain(); return true; }
+    if (a === 'tie-cancel') { tieCancel(); return true; }
+    return false;
+  }
+
+  /* ======================================================================
      7. ERGEBNIS-EINGABE
      ====================================================================== */
   function openResultSheet({ slotId = null, resultId = null, extra = false } = {}) {
@@ -3119,6 +3731,8 @@
     html += `<div class="rs-head"><span class="g-emoji" aria-hidden="true">${esc(g.emoji)}</span><div style="min-width:0"><div class="t">${esc(g.name)}</div><div class="s">${esc(sub)}</div></div></div>`;
     if (slot) html += sheetJokerRow(draft, slot, existing);
     html += g.scoring === 'free' ? freeBody(draft, g) : placementBody(draft, g);
+    const tipN = existing ? (existing.tips || []).length : slot ? Object.keys(openTips(slot.id)).length : 0;
+    if (tipN) html += `<div class="hc-note"><b>🎯 Tipp-Joker:</b> ${tipN} ${plural(tipN, 'Tipp', 'Tipps')}${existing ? ' – richtige Tipps bekommen weiterhin +' + TIP_BONUS : ' – werden beim Speichern aufgedeckt'}</div>`;
     const hc = existing ? existing.handicaps || [] : state.wheel.log.filter((l) => (l.slotId || null) === (slot ? slot.id : null));
     if (hc.length) {
       html += `<div class="hc-note"><b>Handicaps:</b> ${hc.map((h) => { const p = playerById(h.playerId); return p ? `${face(p)} ${esc(h.emoji)} ${esc(h.title)}` : ''; }).filter(Boolean).join(' · ')}</div>`;
@@ -3173,9 +3787,14 @@
     const pids = state.players.map((p) => p.id);
     if (g.scoring !== 'free' && draft.order.length !== pids.length) return false;
     const jokers = slot ? draft.jokers.filter((pid) => pids.includes(pid)) : [];
-    const entries = applyJokers(g.scoring === 'free'
+    const base = applyJokers(g.scoring === 'free'
       ? scoreFree(draft.raw, pids, draft.mult)
       : scorePlacement(g.points, draft.order, draft.ties, draft.mult), jokers);
+    // Tipp-Joker: bei neuen Ergebnissen die offenen Tipps, beim Bearbeiten die gespeicherten
+    const tipSrc = (existing ? (existing.tips || []).map((t) => ({ by: t.by, on: t.on })) : slot ? Object.entries(openTips(slot.id)).map(([by, on]) => ({ by, on })) : [])
+      .filter((t) => pids.includes(t.by));
+    const tipped = applyTips(base, tipSrc);
+    const entries = tipped.entries;
     // Pro Spielplan-Platz gibt es genau ein Ergebnis – auch wenn zwei Handys gleichzeitig eintragen.
     const id = existing ? existing.id : slot ? 'r_' + slot.id : 'x_' + uid();
     const prevResult = state.results.find((r) => r.id === id) || null;
@@ -3183,6 +3802,9 @@
     const prevCalls = clone(state.jokerCalls);
     const slotKey = slot ? slot.id : null;
     const isNew = !existing;
+    const prevTipNodes = {};
+    if (isNew && slotKey) Object.keys(state.live).forEach((k) => { if ((k.indexOf('tip_') === 0 && state.live[k] && state.live[k].s === slotKey) || k === 'tipLock_' + slotKey) prevTipNodes[k] = clone(state.live[k]); });
+    let savedRes = null;
     if (isNew) { local.tab = 'board'; saveLocal(); }
     commit((st) => {
       let handicaps = existing ? existing.handicaps || [] : [];
@@ -3198,12 +3820,15 @@
         id, slotId: slotKey, gameId: g.id, gameName: g.name, emoji: g.emoji, unit: g.unit,
         scoring: g.scoring, multiplier: draft.mult, ts: existing ? existing.ts : Date.now(),
         input: g.scoring === 'free' ? { raw: Object.assign({}, draft.raw) } : { order: draft.order.slice(), ties: draft.ties.slice(0, draft.order.length - 1).map(Boolean) },
-        entries, handicaps, jokers,
+        entries, handicaps, jokers, tips: tipped.tips,
       };
+      savedRes = res;
       st.results = st.results.filter((r) => r.id !== id && !(slotKey && r.slotId === slotKey)).concat(res);
       st.results.sort((a, b) => a.ts - b.ts);
       if (slotKey) delete st.jokerCalls[slotKey];
+      Object.keys(prevTipNodes).forEach((k) => { delete st.live[k]; });
     });
+    if (isNew && savedRes && savedRes.tips.length) setTimeout(() => showTipReveal(savedRes), 350);
     if (isNew) window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
     toast(existing ? 'Ergebnis geändert' : 'Ergebnis gespeichert', {
       label: 'Rückgängig',
@@ -3211,7 +3836,7 @@
         st.results = st.results.filter((r) => r.id !== id);
         if (prevResult) st.results.push(prevResult);
         st.results.sort((a, b) => a.ts - b.ts);
-        if (isNew) { st.wheel = prevWheel; st.jokerCalls = prevCalls; }
+        if (isNew) { st.wheel = prevWheel; st.jokerCalls = prevCalls; Object.assign(st.live, clone(prevTipNodes)); }
       }),
     }, 6000);
     return true;
@@ -3356,6 +3981,7 @@
       w.log.push({ id: uid(), slotId, race: w.race, playerId: pid, listId: list.id, itemId: pick.id, emoji: pick.emoji, title: pick.title, text: pick.text, ts: Date.now() });
       w.current[pid] = { listId: list.id, itemId: pick.id, emoji: pick.emoji, title: pick.title, text: pick.text };
       w.lastSpin = { id: spinId, playerId: pid, listId: list.id, itemId: pick.id, at: Date.now() };
+      lockTips(st, slotId); // ab der ersten Drehung wird nicht mehr getippt
     }, { render: false });
     const chip = document.querySelector(`.sp[data-pid="${pid}"] .as`);
     if (chip) { chip.textContent = 'dreht …'; chip.classList.remove('set'); }
@@ -4200,6 +4826,7 @@
       bd.forEach((d) => { const val = d.pts[r.id] || 0; if (val > 0 && (!best || val > best.val)) best = { val, d }; });
       if (best) facts.push(`stärkste Disziplin: ${best.d.emoji} ${best.d.name}`);
       if (r.jokerBonus) facts.push(`+${fmtPts(r.jokerBonus)} durch Joker`);
+      if (r.tipBonus) facts.push(`+${fmtPts(r.tipBonus)} durch den Tipp-Joker`);
       if (r.hcWins) facts.push(`${r.hcWins} ${plural(r.hcWins, 'Sieg', 'Siege')} trotz Handicap`);
       return `<div class="stat-row" style="--pc:${esc(r.p.color)}">${avatar(r.p, 'sm', { crown: false })}<div><div class="nm">${r.rank}. ${esc(r.p.name)} · ${fmtPts(r.points)} Punkte</div><div class="facts">${esc(facts.join(' · '))}</div></div></div>`;
     }).join('');
@@ -4463,6 +5090,9 @@
     editGames: openGames,
     editLists: openListsOverview,
     joker: (el) => toggleJokerCall(el.dataset.slot, el.dataset.pid),
+    tip: (el) => openTipSheet(el.dataset.slot, el.dataset.pid),
+    mod: (el) => openModCard(el.dataset.k, el.dataset.gid || null),
+    tipClose: (el) => closeTips(el.dataset.slot),
     holStart: (el) => holStart(el.dataset.slot),
     bluffStart: (el) => bluffStart(el.dataset.slot),
     buzzStart: (el) => buzzStart(el.dataset.slot),
@@ -4572,6 +5202,12 @@
     get me() { return local.me || null; }, get device() { return local.dev; },
     devices: () => devices(), qmPresent: () => qmPresent(), hasDevice: (pid) => hasDevice(pid),
     _holReveal: () => holReveal(), _bluffStep: () => bluffRevealStep(), quizFirstPlan: () => quizFirstPlan(),
+    // Tipp-Joker, Stechen, Countdown, Ansagen
+    tipStatus: (pid, slotId) => tipStatus(pid, { slotId }), openTips: (slotId) => openTips(slotId), tipsLocked: (slotId) => tipsLocked(slotId),
+    _setTip: (slotId, pid, on) => setTip(slotId, pid, on), _closeTipsNow: (slotId) => commit((st) => lockTips(st, slotId)),
+    tieTop: (k) => tieTop(k), _tieStart: (k) => tieStart(k), _tieResolve: (a, m) => tieResolve(a, m), parseGuess,
+    _startTimer: (s) => startTimer(s), modCard: (k, g) => modCard(k, g),
+    _setBonus: (k, v) => commit((st) => { if (st.live[k]) st.live[k].bonus = v; }, { render: false }),
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -976,6 +976,79 @@ button.bl-opt { cursor: pointer; }
 @media (min-width: 560px) {
   .h1 { font-size: 34px; }
 }
+/* ---------- Tipp-Joker ---------- */
+.jk.tip { border-color: rgba(76, 201, 240, .45); }
+.jk.tip.on { border-style: solid; border-color: #4cc9f0; background: rgba(76, 201, 240, .14); }
+.jk.tip.on small { color: #4cc9f0; }
+.tip-row .link-btn.tip-close { align-self: flex-start; padding-top: 0; }
+.tip-row .btn.tip-close { width: 100%; }
+.tv-call.tip { color: #4cc9f0; border-color: #4cc9f0; background: rgba(76, 201, 240, .14); }
+.tip-card { --pc: #4cc9f0; }
+.tip-lines { width: 100%; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.tip-line { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: var(--deck); border: 1px solid var(--rail); font-size: 15px; animation: bl-in .5s cubic-bezier(.2, 1.3, .4, 1) both; }
+.tip-line:nth-child(2) { animation-delay: .35s; } .tip-line:nth-child(3) { animation-delay: .7s; } .tip-line:nth-child(n+4) { animation-delay: 1.05s; }
+.tip-line.ok { border-color: rgba(69, 214, 154, .7); }
+.tip-line.bad { opacity: .8; }
+.tip-who { min-width: 0; }
+.tip-res { font-family: var(--font-display); font-size: 21px; }
+.tip-line.ok .tip-res { color: var(--good); }
+.tip-line.bad .tip-res { color: var(--bad); }
+.tv-reveal .tip-line { font-size: clamp(16px, 1.6vw, 30px); }
+
+/* ---------- Ansagen ---------- */
+.mod-links { display: flex; flex-wrap: wrap; gap: 0 18px; margin-top: -4px; }
+.mod-link { padding: 4px 0; font-size: 14px; }
+.mod-card { display: flex; flex-direction: column; gap: 12px; font-size: 18px; line-height: 1.5; }
+.mod-card p, .mod-card ul, .mod-card ol { margin: 0; }
+.mod-card ul, .mod-card ol { padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+.mod-note { padding: 10px 12px; border-radius: 12px; background: rgba(255, 201, 60, .12); border: 1px solid rgba(255, 201, 60, .4); font-size: 16px; }
+.mod-tip { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--deck); border: 1px dashed var(--rail); font-size: 14px; color: var(--dim); }
+.mod-tip b { color: var(--ink); }
+.g-tools { display: flex; gap: 6px; flex: none; }
+.g-tool { font-size: 17px; }
+
+/* ---------- Countdown ---------- */
+.gn-timer {
+  position: fixed; z-index: 62; top: calc(env(safe-area-inset-top, 0px) + 66px); right: 12px;
+  padding: 8px 18px; border-radius: 999px; border: 2px solid var(--gold); background: #1c1846; color: var(--gold);
+  font-family: var(--font-display); font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.gn-timer.low { color: var(--bad); border-color: var(--bad); animation: bz-blink .5s ease-in-out infinite; }
+.gn-timer.done { background: var(--bad); color: #2a0008; border-color: var(--bad); }
+.gn-timer.tv { font-size: clamp(36px, 5vw, 96px); padding: 10px 34px; top: clamp(12px, 2vw, 36px); right: clamp(12px, 2vw, 36px); }
+.gn-timer.in-head { position: static; font-size: 19px; padding: 5px 11px; box-shadow: none; white-space: nowrap; }
+.g-timer-slot { display: flex; align-items: center; }
+.g-timer-slot:empty { display: none; }
+.g-foot .btn.ghost { background: var(--night); }
+.timer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+/* ---------- Bonusfrage ---------- */
+.bonus-flag { padding: 8px 12px; border-radius: 12px; background: rgba(255, 201, 60, .16); border: 1px solid var(--gold); color: var(--gold); font-weight: 900; font-size: 14.5px; text-align: center; animation: pop .45s cubic-bezier(.2, 1.5, .4, 1); }
+.bonus-btn { align-self: flex-start; }
+.bl-qm-truth .bonus-btn { margin-top: 8px; }
+.bonus-mini { color: var(--gold); font-size: 12px; }
+.game.tv .bonus-flag { font-size: clamp(15px, 1.5vw, 28px); }
+
+/* ---------- Stechen ---------- */
+.tie-box { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 18px; border: 2px solid var(--gold); background: radial-gradient(circle at 50% 0%, rgba(255, 201, 60, .16), transparent 70%), var(--deck); }
+.tie-q { margin: 0; font-weight: 700; }
+.tie-st { display: flex; flex-wrap: wrap; gap: 6px; }
+.tie-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 18px; }
+.tie-ans { font-size: 16px; }
+.tie-ans b { font-family: var(--font-display); font-size: 24px; color: var(--gold); }
+.tie-row { --pc: var(--dim); display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; background: var(--deck-2); border: 1px solid var(--rail); }
+.tie-row.win { border-color: var(--gold); background: rgba(255, 201, 60, .14); }
+.tie-v { font-family: var(--font-display); font-size: 18px; font-variant-numeric: tabular-nums; }
+.tie-d { font-size: 13px; color: var(--dim); white-space: nowrap; }
+.tie-link { align-self: center; font-size: 13.5px; }
+.game.tv .tie-box { font-size: clamp(15px, 1.4vw, 26px); }
+.game.tv .tie-v { font-size: clamp(18px, 2vw, 38px); }
+
+/* ---------- Vorleser beim Buzzer ---------- */
+.reader-note { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; text-align: center; }
+.reader-note .link-btn { padding: 2px 4px; }
+.bz-sc .nm small { font-size: 11px; color: var(--gold); font-weight: 800; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

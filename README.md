@@ -130,12 +130,21 @@ Der kostenlose Tarif (*Spark*) reicht für eure GameNights um ein Vielfaches.
 - Ein versehentlich gesetzter Joker lässt sich durch erneutes Antippen zurücknehmen, solange das Spiel noch nicht eingetragen ist.
 - Anzahl der Joker und die Länge der Pechsträhne stellst du in `config.js` unter `rules` ein.
 
+### Tipp-Joker
+- Jeder Spieler hat **einmal pro Abend** den Tipp-Joker. Vor einem Spiel tippt er geheim, **wer das Spiel gewinnt**, auch auf sich selbst.
+- Liegt er richtig, bekommt er **+1 Punkt** dazu. Das gilt immer, auch im Finale. Ein geteilter Sieg zählt als richtig.
+- Getippt wird auf der Tabelle unter „Als Nächstes“ in der Zeile **Tipp-Joker**: auf den eigenen Namen tippen und den Sieger wählen. Mit Live-Sync geht das nur auf dem eigenen Handy. Die anderen sehen bis zum Ende nur **„getippt ✓“**, der Fernseher nur, wie viele Tipps im Topf sind.
+- **Die Tipps schließen**, sobald das Spiel startet (Higher or Lower, Bluff, Buzzer), sobald zum ersten Mal am Glücksrad gedreht wird, oder wenn jemand **Tipps schließen** tippt. Mit Quizmaster ist das sein **Wettbüro**: Er sieht alle Tipps und schließt sie.
+- Beim Eintragen des Ergebnisses deckt die App die Tipps groß auf allen Handys und dem Fernseher auf.
+- Mit dem normalen Joker kombinierbar. Der Joker verdoppelt den Extrapunkt aber nicht.
+- Ausschalten oder ändern: `config.js` → `rules` → `tipJokers` (0 = aus).
+
 ### Rennverlauf
 Auf der Tabelle zeigt eine Grafik, wie sich die Punkte über den Abend entwickelt haben. Wenn du auf die Grafik tippst, siehst du den Stand nach jedem einzelnen Spiel.
 
 ### Siegerehrung
 - Nach dem letzten Spiel: **Zur Siegerehrung**. Die Plätze werden einzeln aufgedeckt, erst Platz 3, dann Platz 2, dann mit Trommelwirbel der Sieger.
-- Danach verleiht die App automatisch **Abzeichen**: Seriensieger, Comeback-König, Finalheld, Joker-Profi, Handicap-Held, Ewiger Zweiter, Glückspilz, Allrounder und Pechvogel. Ein Abzeichen gibt es nur, wenn es wirklich verdient ist.
+- Danach verleiht die App automatisch **Abzeichen**: Seriensieger, Comeback-König, Finalheld, Joker-Profi, Orakel (Tipp-Joker richtig), Handicap-Held, Ewiger Zweiter, Glückspilz, Allrounder und Pechvogel. Ein Abzeichen gibt es nur, wenn es wirklich verdient ist.
 - **Wanderpokal:** Mit **Siegerfoto aufnehmen** landet ein Foto des Siegers in der Ruhmeshalle. Bei der nächsten GameNight trägt der Titelverteidiger eine **Krone** am Avatar.
 
 ### TV-Modus
@@ -172,7 +181,20 @@ Der Quizmaster leitet den **Quizblock**: Schätzfragen, Filme erraten, Higher or
 3. **Higher or Lower:** Nur der Quizmaster sieht den Wert jeder Karte und wohin sie gehört. Haben alle einsortiert, sieht er, wer richtig liegt. Die Auflösung kommt erst, wenn er **Aufdecken** tippt. Die Spieler sehen so lange „… deckt gleich auf …“.
 4. **Bluff:** Nur der Quizmaster sieht die Wahrheit, die eingehenden Lügen mit Namen und beim Abstimmen, wer was gewählt hat. Er deckt **Lüge für Lüge** auf und zum Schluss die Wahrheit. Die Punkte erscheinen erst mit der Wahrheit, und erst danach geht es zur nächsten Frage.
 5. **Buzzer (Schätzfragen, Filme erraten):** Der Quizmaster liest die Fragen vor, tippt **Freigeben** und wertet mit **Richtig** oder **Falsch**. Die Fragen bringt er selbst mit.
-6. Ist sein Quizblock gespielt, zeigt das Pult **„Quizblock geschafft“** mit **Als Quizmaster abmelden**. Danach schaut sein Handy nur noch zu, und Higher or Lower und Bluff decken wieder von selbst auf.
+6. Ist sein Quizblock gespielt, zeigt das Pult **„Quizblock geschafft“** mit **📣 Abschluss vorlesen** (Zwischenstand) und **Als Quizmaster abmelden**. Danach schaut sein Handy nur noch zu, und Higher or Lower und Bluff decken wieder von selbst auf.
+
+### Werkzeuge für den Quizmaster
+Alle Werkzeuge funktionieren auch ohne Quizmaster. Dann darf sie jeder Spieler benutzen, und bei der Bonusfrage entscheidet der Zufall.
+
+| Werkzeug | Mit Quizmaster | Ohne Quizmaster |
+|---|---|---|
+| **📣 Ansagen** | Vor dem ersten Spiel **Eröffnung vorlesen** (Spieler, Punkte, Joker, Tipp-Joker, Finale). Zu jedem Quizspiel eine Karte mit den Regeln zum Vorlesen, plus kleine Moderations-Tipps nur für ihn. Am Ende **Abschluss** mit Zwischenstand. | Jeder sieht die Karten als **Regeln**. |
+| **⏱ Countdown** | Oben im Spiel: 10 bis 90 Sekunden. Läuft auf allen Handys und dem Fernseher, am Ende ein Gong. Nur er kann ihn starten. | Jeder Spieler kann ihn starten. |
+| **★ Bonusfrage** | Einmal pro Spiel: Buzzer-Frage (vor dem Freigeben), Bluff-Frage (während geschrieben wird) oder Higher-or-Lower-Runde (bei der ersten Karte) zählt doppelt. | Bei Higher or Lower und Bluff lost die App eine Bonusrunde bzw. -frage aus. Beim Buzzer markiert sie der Vorleser. |
+| **🎯 Wettbüro** | Sieht alle Tipp-Joker mit Ziel und schließt die Tipps vor dem Start. | Jeder kann die Tipps schließen. Sonst schließen sie beim Start von selbst. |
+| **⚔️ Stechen** | Gleichstand an der Spitze eines Quizspiels: Er stellt eine Schätzfrage, die beiden tippen ihre Zahl geheim ins Handy, er trägt die richtige Zahl ein. Wer näher dran ist, gewinnt das Spiel allein. | Die Frage stellt ein Spieler, der nicht im Stechen steckt. Sind alle gleichauf, bleibt es geteilt. |
+
+Zum Stechen: Bei Higher or Lower und Bluff erscheint der Knopf im Endstand, beim Buzzer als kleiner Link, sobald zwei vorne gleichauf liegen. Beim Buzzer bekommt der Sieger des Stechens 1 Punkt dazu. Ohne Live-Sync trägt man alle Schätzungen und die Lösung auf dem einen Handy ein.
 
 Weitere Regeln:
 - Der Quizmaster hat seine eigenen Knöpfe, aber die Spieler-Handys behalten alle Knöpfe. Jeder darf weiterhin Ergebnisse eintragen, den Spielplan ändern und so weiter.
@@ -197,9 +219,10 @@ Alle drei laufen mit Live-Sync auf allen Handys gleichzeitig. Jedes Handy spielt
 - Gespielt wird **Best of 5**: 5 Runden, jede mit einer zufälligen Kategorie. An einem Abend kommt keine Kategorie doppelt dran. Kategorien, die länger nicht dran waren, kommen bevorzugt.
 - Jede Runde startet mit einer Karte, deren Wert sichtbar ist. Danach werden **12 Karten** einsortiert: Wer dran ist, tippt auf die Lücke im Zeitstrahl, in die die Karte gehört.
 - Alle bekommen dieselbe Karte und sind **reihum** dran. Die Antworten bleiben verdeckt, bis alle gewählt haben. Wer anfängt, wechselt mit jeder Karte.
-- Jeder hat **2 Leben** pro Runde. Falsch heißt ein Leben weg, beide weg heißt raus. Wer zuletzt übrig bleibt, gewinnt die Runde. Liegen alle Verbliebenen gleichzeitig falsch und würden alle rausfliegen, fliegt niemand.
+- Jeder hat **2 Leben** pro Runde. Falsch heißt ein Leben weg, beide weg heißt raus. Wer zuletzt übrig bleibt, gewinnt die Runde. In der nächsten Runde (neue Kategorie) haben alle wieder volle Leben. Liegen alle Verbliebenen gleichzeitig falsch und würden alle rausfliegen, fliegt niemand.
+- **Bonusrunde:** Eine Runde zählt doppelt. Mit Quizmaster legt er sie fest, ohne lost die App sie beim Start aus.
 - Sind alle Karten durch, gewinnt, wer die meisten Leben übrig hat (bei Gleichstand teilen sich beide die Runde).
-- **Endstand:** Wer die meisten Runden gewinnt, wird Erster. Bei Gleichstand entscheiden die richtigen Antworten. **Ergebnis eintragen** überträgt das in die Tabelle (inklusive Joker und Finale ×2).
+- **Endstand:** Wer die meisten Runden gewinnt, wird Erster. Bei Gleichstand entscheiden die richtigen Antworten, danach auf Wunsch ein **Stechen** (Abschnitt 5). **Ergebnis eintragen** überträgt das in die Tabelle (inklusive Joker, Tipp-Joker und Finale ×2).
 - **Mit Quizmaster** wartet die Auflösung jeder Karte, bis er **Aufdecken** tippt (siehe Abschnitt 5).
 - Hat jemand kein Handy dabei, kann ein anderer mit **„… hat kein Handy? Hier für … tippen“** für ihn wählen. Ohne Live-Sync läuft das Spiel auf einem Handy, das herumgereicht wird.
 - Runden, Leben und Karten stellst du unter **Mehr → Spiele & Punkte → Higher or Lower** ein.
@@ -213,7 +236,8 @@ Alle drei laufen mit Live-Sync auf allen Handys gleichzeitig. Jedes Handy spielt
 - **Wählen:** Danach erscheinen alle Antworten gemischt mit der echten – in einheitlicher Schreibweise, damit man niemanden an Groß- und Kleinschreibung erkennt. Jeder tippt auf die Antwort, die er für wahr hält. Die eigene Lüge wird einem nicht angezeigt. Haben zwei dieselbe Lüge geschrieben, steht sie nur einmal da und zählt für beide.
 - **Auflösung:** Erst die Lügen und wer darauf reingefallen ist, ganz zum Schluss die Wahrheit mit Link zur Quelle. Ohne Quizmaster läuft das von selbst nacheinander ab, mit Quizmaster deckt er Schritt für Schritt auf.
 - **Punkte im Spiel:** Wahrheit gefunden = **2 Punkte**. Für jeden Mitspieler, der auf deine Lüge reinfällt = **1 Punkt**. Bei der letzten Frage doppelt.
-- **Endstand:** Wer die meisten Punkte hat, wird Erster. Bei Gleichstand teilen sich die Spieler den Platz. **Ergebnis eintragen** überträgt das mit 3/1/0 in die Tabelle (inklusive Joker und Finale ×2). Dazu kürt die App die **beste Lüge des Spiels**.
+- **Bonusfrage:** Eine weitere Frage zählt doppelt. Mit Quizmaster legt er sie fest, ohne lost die App sie aus (nie die letzte Frage, die zählt ja schon doppelt).
+- **Endstand:** Wer die meisten Punkte hat, wird Erster. Bei Gleichstand teilen sich die Spieler den Platz, außer ein **Stechen** entscheidet. **Ergebnis eintragen** überträgt das mit 3/1/0 in die Tabelle (inklusive Joker und Finale ×2). Dazu kürt die App die **beste Lüge des Spiels**.
 - Im Vorrat sind **60 Fragen** aus elf Themen. Fragen, die schon dran waren, kommen erst wieder, wenn die anderen durch sind – das reicht für rund zehn Abende.
 - Hat jemand kein Handy dabei, kann ein anderer mit **„… hat kein Handy? Hier für … schreiben“** für ihn tippen. Ohne Live-Sync wird ein Handy herumgereicht, und alles bleibt verdeckt.
 - Fragen pro Spiel, doppelte letzte Frage und den Vorschlags-Knopf stellst du unter **Mehr → Spiele & Punkte → Bluff** ein.
@@ -222,7 +246,9 @@ Alle drei laufen mit Live-Sync auf allen Handys gleichzeitig. Jedes Handy spielt
 
 ### Buzzer
 - Bei **Schätzfragen** und **Filme erraten** zeigt die Tabelle statt „Ergebnis eintragen“ den Knopf **Buzzer öffnen**. Unter *Mehr → Spiele & Punkte* kannst du den Buzzer bei jedem Spiel ein- oder ausschalten.
-- Die Spieler sehen auf ihrem Handy nur einen großen Buzzer. Der **Quizmaster** liest die Frage vor und tippt **Freigeben**. Mit Live-Sync braucht der Buzzer deshalb ein Handy mit der Rolle Quizmaster.
+- Die Spieler sehen auf ihrem Handy nur einen großen Buzzer. Der **Quizmaster** liest die Frage vor und tippt **Freigeben**.
+- **Ohne Quizmaster** fragt die App: **Wer liest vor?** Wer **Ich lese vor** tippt, bekommt die Knöpfe zum Freigeben und Werten und buzzert bei diesen Fragen nicht mit. Mit **Ich übernehme** wechselt der Vorleser, mit **Vorlesen abgeben** buzzert man wieder mit.
+- **Bonusfrage:** Vor dem Freigeben kann der Quizmaster (oder Vorleser) einmal pro Spiel **★ Als Bonusfrage** tippen. Dann gibt **Richtig** 2 Punkte.
 - Wer zuerst drückt, erscheint riesig auf allen Handys und dem Fernseher, und es ertönt ein lauter Buzzer-Ton. Der Quizmaster sieht zusätzlich, wie knapp die anderen dahinter lagen.
 - Bei **Schätzfragen** geben alle ihre Schätzung laut ab, und der Quizmaster vergibt den Punkt mit **+** beim Spieler, der am nächsten dran war. **Frage überspringen** schaltet zur nächsten Frage.
 - **Richtig +1** gibt einen Punkt und schaltet zur nächsten Frage. **Falsch** sperrt diesen Spieler für die Frage, und die anderen dürfen nochmal.
@@ -258,7 +284,7 @@ Ein neues Spiel sieht zum Beispiel so aus:
 - `scoring: 'placement'` → Spieler in Zielreihenfolge antippen, Punkte aus `points: [3, 1, 0]`
 - `scoring: 'free'` → Punkte pro Spieler frei eintragen (Schätzfragen, Quiz …)
 
-> **Nach jeder Änderung an den Dateien:** In `sw.js` die Zeile `const VERSION = 'gamenight-v1.4.0';` hochzählen (z. B. auf `v1.4.1`) und alles neu hochladen (siehe Abschnitt 10). Die installierte App zeigt dann **„Neue Version verfügbar“** an.
+> **Nach jeder Änderung an den Dateien:** In `sw.js` die Zeile `const VERSION = 'gamenight-v1.5.0';` hochzählen (z. B. auf `v1.5.1`) und alles neu hochladen (siehe Abschnitt 10). Die installierte App zeigt dann **„Neue Version verfügbar“** an.
 
 ---
 
@@ -268,6 +294,9 @@ Ein neues Spiel sieht zum Beispiel so aus:
 - **Gleichstand in einem Spiel:** Tippe nach dem Eintragen auf **„=“** zwischen zwei Plätzen. Die beiden teilen sich die Punkte (bei 3/1/0 und geteiltem 1. Platz: je 2 Punkte).
 - **Finale:** Spiele mit „×2“ zählen doppelt.
 - **Joker:** verdoppelt die eigenen Punkte in einem Spiel (Finale + Joker = ×4).
+- **Tipp-Joker:** richtiger Sieger-Tipp = **+1 Punkt**, einmal pro Abend und Spieler. In der Ergebnisliste steht dann 🎯.
+- **Bonusfrage / Bonusrunde:** zählt im Quizspiel doppelt, verändert also, wer das Spiel gewinnt.
+- **Stechen in einem Quizspiel:** Der Sieger steht allein auf Platz 1, der andere rückt auf Platz 2.
 - **Mario Kart:** ein Eintrag pro Grand Prix.
 - **Gleichstand in der Tabelle:** Zuerst zählen die Siege, dann die 2. Plätze. Ist dann immer noch alles gleich, zeigt die App „Stechen“ an. Das Stechen trägst du als **Zusatzspiel** ein.
 - **„Nicht mehr einzuholen“:** Die App rechnet mit, wie viele Punkte noch zu holen sind, und meldet, sobald der Sieg feststeht.
@@ -289,7 +318,7 @@ Ein neues Spiel sieht zum Beispiel so aus:
 
 ## 10. Update einspielen
 
-So kommt eine neue Version (z. B. 1.4) in deine App, wenn sie bei GitHub Pages liegt:
+So kommt eine neue Version (z. B. 1.5) in deine App, wenn sie bei GitHub Pages liegt:
 
 1. Das neue App-Paket entpacken.
 2. Bei GitHub dein Repository öffnen → **Add file** → **Upload files**.
